@@ -31,6 +31,10 @@ class DemoGateMiddleware(BaseHTTPMiddleware):
         if path in PUBLIC_PATHS:
             return await call_next(request)
 
+        # When Clerk is configured, allow Bearer token (routers will validate JWT)
+        if settings.clerk_jwks_url and request.headers.get("authorization", "").lower().startswith("bearer "):
+            return await call_next(request)
+
         key = request.headers.get("x-demo-key")
         if key != settings.demo_key:
             return Response(

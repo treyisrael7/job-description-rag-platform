@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: rag_assistant
+      POSTGRES_DB: interview_os
     ports:
       - "5432:5432"
     volumes:
@@ -24,9 +24,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/rag_assistant
-      DATABASE_URL_SYNC: postgresql://postgres:postgres@postgres:5432/rag_assistant
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/interview_os
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@postgres:5432/interview_os
       DEMO_KEY: ${DEMO_KEY:-}
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
       AWS_REGION: ${AWS_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
@@ -50,12 +52,9 @@ services:
     build:
       context: ./apps/web
       dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
-        NEXT_PUBLIC_DEMO_KEY: ${DEMO_KEY:-}
     container_name: rag-web
     ports:
-      - "3000:3000"
+      - "3001:3000"  # use 3001 if 3000 is taken by local dev
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
       NEXT_PUBLIC_DEMO_KEY: ${DEMO_KEY:-}

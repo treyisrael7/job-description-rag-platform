@@ -1,8 +1,8 @@
-"""JD-aware section detection. Canonical section map + alias mapping."""
+"""Job description–aware section detection. Canonical section map + alias mapping."""
 
 import re
 
-# Canonical JD section keys (order hints for extraction)
+# Canonical job description section keys (order hints for extraction)
 CANONICAL_SECTIONS = [
     "about",
     "position_summary",
@@ -27,11 +27,17 @@ JD_SECTION_ALIASES: dict[str, str] = {
     "company information": "company_info",
     "who we are": "company_info",
     "compensation": "compensation",
+    "compensation & benefits": "compensation",
+    "compensation and benefits": "compensation",
+    "compensation benefits": "compensation",
     "salary": "compensation",
     "salary range": "compensation",
+    "salary range:": "compensation",
     "pay": "compensation",
+    "pay range": "compensation",
     "benefits": "compensation",
     "total rewards": "compensation",
+    "remuneration": "compensation",
     "location": "location",
     "work location": "location",
     "remote": "location",
@@ -64,6 +70,8 @@ JD_SECTION_ALIASES: dict[str, str] = {
     "preferred qualifications": "preferred_qualifications",
     "nice to have": "preferred_qualifications",
     "pluses": "preferred_qualifications",
+    # Placed last so "what you'll do" matches before "what we offer" (both start with "what")
+    "what we offer": "compensation",
 }
 
 
@@ -76,7 +84,7 @@ def _normalize_heading(text: str) -> str:
 
 
 def _match_section_heading(line: str) -> str | None:
-    """Return canonical section if line matches a JD heading, else None."""
+    """Return canonical section if line matches a job description heading, else None."""
     norm = _normalize_heading(line)
     if not norm or len(norm) > 60:
         return None
@@ -86,9 +94,10 @@ def _match_section_heading(line: str) -> str | None:
     # First word / prefix match: require short line to avoid treating
     # content (e.g. "Remote - US. Some travel required.", "Hybrid - San Francisco, CA") as heading
     stripped_len = len(line.strip())
-    # Allow longer lines for "Salary Range:" / "Salary:" style headings
-    if norm.startswith("salary") and stripped_len < 60:
-        return "compensation"
+    # Allow "Salary:", "Pay:", "Compensation:" style headings (even with value inline)
+    for prefix in ("salary", "pay", "compensation"):
+        if norm.startswith(prefix) and stripped_len < 80:
+            return "compensation"
     if stripped_len > 35:
         return None
     # "remote"/"hybrid" as first word often appear in location content, not as headings
@@ -106,7 +115,7 @@ def _match_section_heading(line: str) -> str | None:
 
 def sectionize_jd_text(text: str) -> list[tuple[str, str]]:
     """
-    Split JD text into (section_type, content) tuples.
+    Split job description text into (section_type, content) tuples.
     Uses heading detection + alias mapping; falls back to keyword grouping.
     Returns list of (canonical_section, section_content).
     """
@@ -150,7 +159,7 @@ def sectionize_jd_text(text: str) -> list[tuple[str, str]]:
 
 
 def normalize_jd_text(text: str) -> str:
-    """Normalize JD text: artifacts, bullets, repeated headers/footers."""
+    """Normalize job description text: artifacts, bullets, repeated headers/footers."""
     if not text:
         return ""
     t = text.replace("\u00a0", " ")

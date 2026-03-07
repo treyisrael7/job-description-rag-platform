@@ -1,24 +1,38 @@
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Project root (apps/api/app/core/config.py -> 4 levels up)
-_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-_ROOT_ENV = str(_ROOT / ".env")
+# Project root (apps/api/app/core/config.py -> 5 levels up: core->app->api->apps->root)
+_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
+# API dir (apps/api)
+_API_ROOT = _ROOT / "apps" / "api"
+
+# Explicitly load .env files into os.environ (ensures CLERK_JWKS_URL etc. are available)
+for env_path in (_ROOT / ".env", _API_ROOT / ".env"):
+    if env_path.exists():
+        load_dotenv(env_path, override=False)  # earlier files take precedence
 
 
 class Settings(BaseSettings):
-    # Load root .env so OPENAI_API_KEY etc work when API runs from apps/api/ or project root
+    # Load .env from project root and apps/api (api dir takes precedence for overrides)
     model_config = SettingsConfigDict(
-        env_file=_ROOT_ENV,
+        env_file=(_ROOT / ".env", _API_ROOT / ".env"),
         env_file_encoding="utf-8",
     )
 
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/rag_assistant"
-    database_url_sync: str = "postgresql://postgres:postgres@localhost:5432/rag_assistant"
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/interview_os"
+    database_url_sync: str = "postgresql://postgres:postgres@localhost:5432/interview_os"
 
     # Demo gate
     demo_key: str | None = None  # DEMO_KEY env; if set, require x-demo-key header on non-public routes
+
+    # Clerk auth (when set, Bearer token required; else fallback to demo_key + user_id)
+    clerk_jwks_url: str | None = None  # CLERK_JWKS_URL e.g. https://<xxx>.clerk.accounts.dev/.well-known/jwks.json
+    clerk_issuer: str | None = None  # CLERK_ISSUER override; if unset, derived from JWKS URL
+
+    # CORS origins (comma-separated; when empty, uses default localhost list)
+    cors_origins: str = ""  # CORS_ORIGINS e.g. http://localhost:3000,http://192.168.1.5:3000
 
     # AWS S3 (production)
     aws_region: str = "us-east-1"
@@ -33,7 +47,7 @@ class Settings(BaseSettings):
     top_k_max: int = 8  # TOP_K_MAX
     max_completion_tokens: int = 500  # MAX_COMPLETION_TOKENS
 
-    # Chunking (JD uses jd_chunking; these retained for potential generic docs)
+    # Chunking (job description uses jd_chunking; these retained for potential generic docs)
     chunk_size: int = 512  # CHUNK_SIZE (legacy)
     min_chunk_chars: int = 25  # MIN_CHUNK_CHARS
     top_n_candidates: int = 50  # Fetch N by pgvector similarity before MMR

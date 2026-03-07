@@ -5,25 +5,38 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.config import settings
-from app.models import DocumentChunk
+from app.models import DocumentChunk, InterviewSource
+
+# Backward compat: expand canonical section types to legacy job description section names in DB
+SECTION_TYPE_EXPANSION: dict[str, list[str]] = {
+    "tools": ["tools", "tools_technologies"],
+    "qualifications": ["qualifications", "preferred_qualifications"],
+    "about": ["about", "position_summary", "company_info"],
+    "other": ["other", "location", "company_info"],
+}
 from app.services.ingestion import _create_embeddings
 
-# Query keywords -> suggested section types for JD filtering
+# Query keywords -> suggested section types (canonical: responsibilities, qualifications, tools, compensation, about, other)
 QUERY_SECTION_HINTS: dict[str, list[str]] = {
-    "skill": ["qualifications", "tools_technologies", "preferred_qualifications"],
-    "qualification": ["qualifications", "preferred_qualifications"],
+    "skill": ["qualifications", "tools"],
+    "qualification": ["qualifications"],
     "responsibilit": ["responsibilities"],
     "requirement": ["qualifications"],
-    "salary": ["compensation", "about"],
-    "pay": ["compensation", "about"],
-    "compensation": ["compensation", "about"],
-    "location": ["location", "about"],
-    "remote": ["location", "about"],
-    "company": ["company_info", "about"],
-    "role": ["position_summary", "about"],
-    "job": ["position_summary", "about"],
+    "salary": ["compensation"],
+    "salaries": ["compensation"],
+    "pay": ["compensation"],
+    "compensation": ["compensation"],
+    "benefits": ["compensation"],
+    "wage": ["compensation"],
+    "how much": ["compensation"],
+    "location": ["about", "other"],
+    "remote": ["about", "other"],
+    "company": ["about", "other"],
+    "role": ["about"],
+    "job": ["about"],
+    "tool": ["tools"],
+    "tech": ["tools"],
 }
 
 
@@ -99,12 +112,18 @@ async def retrieve_chunks(
     include_low_signal: bool = False,
     section_types: list[str] | None = None,
     doc_domain: str | None = None,
+    source_types: list[str] | None = None,
+    additional_document_ids: list[uuid.UUID] | None = None,
 ) -> list[dict]:
     """
     Search document_chunks by cosine similarity.
-    Fetches top top_n_candidates, filters low-signal, applies MMR for diversity.
+    Joins with interview_sources for metadata. Fetches top candidates, filters, applies MMR.
     By default excludes is_low_signal chunks; pass include_low_signal=true for contact queries.
-    Returns list of {chunk_id, page_number, snippet, score, is_low_signal}.
+    When source_types is None, returns chunks from all sources (existing behavior).
+    Returns list of {
+        chunk_id, chunkId, page_number, page, snippet, text, score,
+        sourceType, sourceTitle, is_low_signal, section_type
+    }.
     """
     distance_col = DocumentChunk.embedding.cosine_distance(query_embedding)
     score_col = (1 - distance_col).label("score")
@@ -118,9 +137,14 @@ async def retrieve_chunks(
             DocumentChunk.embedding,
             DocumentChunk.is_low_signal,
             DocumentChunk.section_type,
+            InterviewSource.source_type.label("src_type"),
+            InterviewSource.title.label("src_title"),
             score_col,
         )
-        .where(DocumentChunk.document_id == document_id)
+        .join(InterviewSource, DocumentChunk.source_id == InterviewSource.id)
+        .where(
+            DocumentChunk.document_id.in_([document_id] + (additional_document_ids or []))
+        )
         .where(DocumentChunk.embedding.isnot(None))
         .order_by(distance_col.asc())
         .limit(limit)
@@ -128,25 +152,37 @@ async def retrieve_chunks(
     if not include_low_signal:
         stmt = stmt.where(DocumentChunk.is_low_signal == False)
     if section_types:
-        stmt = stmt.where(DocumentChunk.section_type.in_(section_types))
+        expanded: set[str] = set()
+        for st in section_types:
+            expanded.add(st)
+            expanded.update(SECTION_TYPE_EXPANSION.get(st, []))
+        stmt = stmt.where(DocumentChunk.section_type.in_(list(expanded)))
     if doc_domain:
         stmt = stmt.where(DocumentChunk.doc_domain == doc_domain)
+    if source_types:
+        stmt = stmt.where(InterviewSource.source_type.in_(source_types))
 
     result = await db.execute(stmt)
     rows = result.all()
 
-    candidates = [
-        {
+    candidates = []
+    for row in rows:
+        source_type_val = getattr(row, "src_type", None) or "jd"
+        source_title_val = getattr(row, "src_title", None) or ""
+        candidates.append({
             "chunk_id": str(row.id),
+            "chunkId": str(row.id),
             "page_number": row.page_number,
+            "page": row.page_number,
             "snippet": row.content,
+            "text": row.content,
             "score": round(float(row.score), 6),
             "is_low_signal": bool(row.is_low_signal),
             "section_type": getattr(row, "section_type", None),
+            "sourceType": source_type_val,
+            "sourceTitle": source_title_val,
             "embedding": row.embedding,
-        }
-        for row in rows
-    ]
+        })
 
     diversified = _mmr_select(
         candidates,
@@ -158,9 +194,14 @@ async def retrieve_chunks(
     return [
         {
             "chunk_id": c["chunk_id"],
+            "chunkId": c["chunkId"],
             "page_number": c["page_number"],
+            "page": c["page"],
             "snippet": c["snippet"],
+            "text": c["text"],
             "score": c["score"],
+            "sourceType": c["sourceType"],
+            "sourceTitle": c["sourceTitle"],
             "is_low_signal": c.get("is_low_signal", False),
             "section_type": c.get("section_type"),
         }

@@ -185,6 +185,7 @@ def _compute_quality_metrics(text: str) -> dict:
         "phone_count": phone_count,
         "unique_word_ratio": unique_word_ratio,
         "length_chars": length_chars,
+        "content": text,
     }
 
 
@@ -207,6 +208,33 @@ def _quality_score(metrics: dict) -> float:
     return max(0.0, min(1.0, score))
 
 
+def _looks_like_key_jd_info(content: str) -> bool:
+    """True if content likely describes salary/compensation or location (short lines often excluded otherwise)."""
+    if not content or len(content) < 15:
+        return False
+    lower = content.lower()
+    # Salary/compensation
+    has_money = "$" in content or "usd" in lower or "eur" in lower or "£" in content
+    has_salary_term = any(
+        term in lower for term in ("salary", "pay", "compensation", "bonus", "benefits")
+    )
+    has_numbers = any(c.isdigit() for c in content)
+    if (has_money and has_numbers) or (has_salary_term and has_numbers):
+        return True
+    # Location (remote, hybrid, city/state, country)
+    has_location_term = any(
+        term in lower
+        for term in ("remote", "hybrid", "on-site", "onsite", "location", "based in")
+    )
+    # City/state patterns: "San Francisco, CA", "New York, NY", "US" / "USA"
+    has_location_like = bool(
+        re.search(r",\s*[A-Z]{2}\b", content)  # comma + 2-letter state
+        or re.search(r"\b(us|usa|u\.s\.|united states)\b", lower)
+        or re.search(r"\b(ca|ny|tx|fl|wa)\b", lower)  # common state abbreviations
+    )
+    return has_location_term or has_location_like
+
+
 def _is_low_signal(metrics: dict) -> bool:
     """
     Mark chunk as low-signal (boilerplate/nav/low-info). Document-agnostic.
@@ -220,8 +248,11 @@ def _is_low_signal(metrics: dict) -> bool:
     phone_count = metrics["phone_count"]
     email_count = metrics["email_count"]
     url_count = metrics["url_count"]
+    content = metrics.get("content", "")
 
     if L < 80:
+        if _looks_like_key_jd_info(content):
+            return False
         return True
     if u < 0.25:
         return True
@@ -239,6 +270,34 @@ def _is_low_signal(metrics: dict) -> bool:
     return False
 
 
+# Document-agnostic section keywords (short heading-like phrases)
+SECTION_KEYWORDS: dict[str, list[str]] = {
+    "responsibilities": ["responsibilities", "key responsibilities", "duties", "what you'll do"],
+    "qualifications": ["qualifications", "requirements", "required", "minimum qualifications"],
+    "tools": ["tools", "technologies", "tech stack", "skills"],
+    "compensation": ["compensation", "salary", "pay", "benefits", "total rewards"],
+    "about": ["about", "summary", "overview", "position summary", "role summary"],
+}
+
+
+def _assign_section_type(content: str) -> str:
+    """
+    Document-agnostic: detect section_type from chunk content using heading/keyword detection.
+    Returns one of: responsibilities, qualifications, tools, compensation, about, other.
+    """
+    lines = content.split("\n")
+    text_lower = content[:500].lower()  # Check first 500 chars for heading
+    for sec, keywords in SECTION_KEYWORDS.items():
+        for kw in keywords:
+            if kw in text_lower:
+                # Prefer match at start of line (heading)
+                for ln in lines[:5]:
+                    if kw in ln.lower() and len(ln.strip()) < 80:
+                        return sec
+                return sec
+    return "other"
+
+
 @dataclass
 class ChunkResult:
     page_number: int
@@ -247,6 +306,9 @@ class ChunkResult:
     quality_score: float
     is_low_signal: bool
     content_hash: str
+    section_type: str = "other"
+    doc_domain: str = "general"
+    skills_detected: list[str] | None = None
 
 
 def chunk_pages(
@@ -296,6 +358,7 @@ def chunk_pages(
             qs = _quality_score(metrics)
             low = _is_low_signal(metrics)
             chash = _content_hash(content)
+            sec_type = _assign_section_type(content)
             results.append(ChunkResult(
                 page_number=page_num,
                 content=content,
@@ -303,6 +366,9 @@ def chunk_pages(
                 quality_score=round(qs, 4),
                 is_low_signal=low,
                 content_hash=chash,
+                section_type=sec_type,
+                doc_domain="general",
+                skills_detected=[],
             ))
             chunk_idx += 1
 

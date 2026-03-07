@@ -17,13 +17,22 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.middleware import DemoGateMiddleware, RateLimitMiddleware
-from app.routers import ask, documents, retrieve
+from app.routers import ask, documents, interview, retrieve, user_resume
 
-app = FastAPI(title="RAG Assistant API", version="0.1.0")
+app = FastAPI(title="InterviewOS API", version="0.1.0")
 
+# CORS: allow_credentials=True cannot be used with allow_origins=["*"] — browser blocks it.
+_DEFAULT_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+]
+_EXTRA = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+_CORS_ORIGINS = list(dict.fromkeys(_DEFAULT_ORIGINS + _EXTRA))
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -48,19 +57,22 @@ async def _check_db() -> tuple[bool, str | None]:
 @app.get("/health")
 async def health():
     ok, err = await _check_db()
+    clerk_configured = bool(settings.clerk_jwks_url)
     if ok:
-        return {"status": "ok", "database": "connected"}
+        return {"status": "ok", "database": "connected", "clerk_configured": clerk_configured}
     return JSONResponse(
         status_code=503,
-        content={"status": "error", "database": "disconnected", "detail": err or "unknown"},
+        content={"status": "error", "database": "disconnected", "detail": err or "unknown", "clerk_configured": clerk_configured},
     )
 
 
 @app.get("/")
 async def root():
-    return {"message": "RAG Assistant API"}
+    return {"message": "InterviewOS API"}
 
 
 app.include_router(ask.router)
 app.include_router(documents.router)
+app.include_router(interview.router)
 app.include_router(retrieve.router)
+app.include_router(user_resume.router)

@@ -26,6 +26,11 @@ class DocumentChunk(Base):
         ForeignKey("documents.id", ondelete="CASCADE"),
         nullable=False,
     )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("interview_sources.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     chunk_index: Mapped[int] = mapped_column(nullable=False)
     content: Mapped[str] = mapped_column(nullable=False)
     page_number: Mapped[int] = mapped_column(nullable=False)

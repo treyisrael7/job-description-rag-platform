@@ -12,4 +12,6 @@ venv
 *.log
 .DS_Store
 uploads/
-scripts/
+
+# Clerk local config (can contain secrets)
+.clerk/

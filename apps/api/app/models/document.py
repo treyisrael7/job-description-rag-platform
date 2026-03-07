@@ -43,6 +43,9 @@ class Document(Base):
     page_count: Mapped[int | None] = mapped_column(nullable=True)
     error_message: Mapped[str | None] = mapped_column(nullable=True)
     jd_extraction_json: Mapped[dict | None] = mapped_column(JSONB(), nullable=True)
+    doc_domain: Mapped[str] = mapped_column(nullable=False, default="general", server_default="general")
+    role_profile: Mapped[dict | None] = mapped_column(JSONB(), nullable=True)
+    competencies: Mapped[list | None] = mapped_column(JSONB(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         server_default=text("now()"),
         nullable=False,

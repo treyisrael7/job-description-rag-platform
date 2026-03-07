@@ -23,15 +23,16 @@ async def test_ask_requires_body(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ingest_requires_document_and_user(client, monkeypatch):
-    """Ingest returns 404 for unknown document, 422 for missing user_id."""
+    """Ingest returns 401 when no auth, 404 for unknown document."""
     monkeypatch.setattr(settings, "demo_key", None)
+    monkeypatch.setattr(settings, "clerk_jwks_url", None)  # No Bearer
     monkeypatch.setattr(settings, "openai_api_key", "sk-test")  # Avoid 503
-    # 422: missing user_id in body
+    # 401: no user_id and no Bearer token
     resp = await client.post(
         "/documents/11111111-1111-1111-1111-111111111111/ingest",
         json={},
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 401
     # 404: document not found
     resp = await client.post(
         "/documents/11111111-1111-1111-1111-111111111111/ingest",

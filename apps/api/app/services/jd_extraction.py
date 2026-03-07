@@ -1,4 +1,4 @@
-"""Rule-based structured extraction from JD text. No LLM."""
+"""Rule-based structured extraction from job description text. No LLM."""
 
 import re
 from dataclasses import asdict, dataclass, field
@@ -100,7 +100,7 @@ def _extract_cloud(text: str) -> list[str]:
 
 def extract_jd_struct(full_text: str) -> dict:
     """
-    Extract structured JSON from JD text. Rule-based, no LLM.
+    Extract structured JSON from job description text. Rule-based, no LLM.
     Returns dict matching JDExtraction schema.
     """
     norm_text = normalize_jd_text(full_text)

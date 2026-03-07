@@ -17,6 +17,7 @@ class User(Base):
         default=uuid.uuid4,
         server_default=text("gen_random_uuid()"),
     )
+    clerk_id: Mapped[str | None] = mapped_column(nullable=True, unique=True)
     email: Mapped[str] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         server_default=text("now()"),

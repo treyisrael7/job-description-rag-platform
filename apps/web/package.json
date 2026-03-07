@@ -1,23 +1,28 @@
 {
-  "name": "@rag-assistant/web",
+  "name": "@interview-os/web",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
+    "@clerk/nextjs": "^7.0.1",
+    "framer-motion": "^12.34.4",
     "next": "15.5.10",
     "react": "^19",
     "react-dom": "^19"
   },
   "devDependencies": {
-    "autoprefixer": "^10",
     "@types/node": "^22",
+    "vitest": "^2.0.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "autoprefixer": "^10",
     "eslint": "^9",
     "eslint-config-next": "15.5.10",
     "tailwindcss": "3.4.0",

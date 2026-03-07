@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
+import { ClerkProvider } from "@clerk/nextjs";
+import { AppChrome } from "@/components/AppChrome";
+import { ClerkAuthProvider } from "@/components/ClerkAuthProvider";
+import { LibraryProvider } from "@/contexts/LibraryContext";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "RAG Assistant",
-  description: "RAG Assistant Web",
+  title: "InterviewOS",
+  description: "Job description–grounded interview practice with evidence-cited feedback",
 };
 
 export default function RootLayout({
@@ -12,8 +16,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body>{children}</body>
-    </html>
+    <ClerkProvider>
+      <html lang="en">
+        <body>
+          <ClerkAuthProvider>
+            <LibraryProvider>
+              <AppChrome />
+              {children}
+            </LibraryProvider>
+          </ClerkAuthProvider>
+        </body>
+      </html>
+    </ClerkProvider>
   );
 }

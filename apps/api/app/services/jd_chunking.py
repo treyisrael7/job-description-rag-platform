@@ -1,17 +1,17 @@
-"""JD-aware chunking. Chunk by semantic section, keep bullets intact."""
+"""Job description–aware chunking. Chunk by semantic section, keep bullets intact."""
 
 import hashlib
 import logging
 import re
 from dataclasses import dataclass
 
-from app.core.config import settings
 from app.services.chunking import (
     _compute_quality_metrics,
     _content_hash,
     _is_low_signal,
     _quality_score,
 )
+from app.services.doc_domain import normalize_section_type
 from app.services.jd_extraction import _extract_skills_from_text
 from app.services.jd_sections import normalize_jd_text, sectionize_jd_text
 
@@ -80,7 +80,7 @@ def chunk_jd_pages(
     max_chunks: int = 300,
 ) -> list[JDChunkResult]:
     """
-    Chunk JD text by semantic section. Keeps bullet lists intact.
+    Chunk job description text by semantic section. Keeps bullet lists intact.
     Tags each chunk with section_type, skills_detected, doc_domain=job_description.
     """
     full_text = "\n\n".join(t for _, t in page_texts)
@@ -104,6 +104,7 @@ def chunk_jd_pages(
             low = _is_low_signal(metrics)
             chash = _content_hash(chunk_content)
             skills = _extract_skills_from_text(chunk_content)
+            canonical_sec = normalize_section_type(sec)
 
             results.append(
                 JDChunkResult(
@@ -113,7 +114,7 @@ def chunk_jd_pages(
                     quality_score=round(qs, 4),
                     is_low_signal=low,
                     content_hash=chash,
-                    section_type=sec,
+                    section_type=canonical_sec,
                     skills_detected=skills,
                     doc_domain=JD_DOMAIN,
                 )

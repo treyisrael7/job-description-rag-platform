@@ -46,7 +46,7 @@ def test_high_signal_chunk():
 
 
 def test_chunk_pages_returns_chunk_results():
-    """chunk_pages returns ChunkResult with quality_score, is_low_signal, content_hash."""
+    """chunk_pages returns ChunkResult with quality_score, is_low_signal, content_hash, section_type."""
     page_texts = [(1, "Experienced engineer with machine learning skills.\n\nWorked at Acme.")]
     results = chunk_pages(page_texts, chunk_size=500, min_chars=10)
     assert len(results) >= 1
@@ -57,6 +57,9 @@ def test_chunk_pages_returns_chunk_results():
     assert isinstance(r.is_low_signal, bool)
     assert r.chunk_index >= 0
     assert len(r.content_hash) == 40  # sha1 hex
+    assert r.section_type in ("responsibilities", "qualifications", "tools", "compensation", "about", "other")
+    assert r.doc_domain == "general"
+    assert r.skills_detected is not None
 
 
 def test_repeated_content_marked_low_signal():

@@ -5,7 +5,7 @@ Verifies:
 - Structured JSON extracted properly
 - Chunk count reasonable (~8–20) for typical JDs
 
-Uses synthetic JDs: Thermo Fisher–style and a differently formatted JD.
+Uses synthetic job descriptions: Thermo Fisher–style and a differently formatted job description.
 """
 
 import pytest
@@ -15,7 +15,7 @@ from app.services.jd_extraction import extract_jd_struct
 from app.services.jd_sections import normalize_jd_text, sectionize_jd_text
 
 
-# Thermo Fisher–style JD: structured headings, bullet lists
+# Thermo Fisher–style job description: structured headings, bullet lists
 THERMO_FISHER_JD = """
 Thermo Fisher Scientific
 
@@ -68,7 +68,7 @@ Page 1 of 1
 """
 
 
-# Differently formatted JD: startup style, different heading names
+# Differently formatted job description: startup style, different heading names
 STARTUP_JD = """
 Acme Tech Inc.
 
@@ -132,7 +132,7 @@ def test_normalize_fixes_bullet_mojibake():
 
 
 def test_thermo_fisher_sections_detected():
-    """Thermo Fisher JD: canonical sections detected via heading + aliases."""
+    """Thermo Fisher job description: canonical sections detected via heading + aliases."""
     norm = normalize_jd_text(THERMO_FISHER_JD)
     sections = sectionize_jd_text(norm)
     section_types = [s[0] for s in sections]
@@ -150,7 +150,7 @@ def test_thermo_fisher_sections_detected():
 
 
 def test_startup_jd_sections_detected():
-    """Differently formatted JD: 'What You'll Do' -> responsibilities, etc."""
+    """Differently formatted job description: 'What You'll Do' -> responsibilities, etc."""
     norm = normalize_jd_text(STARTUP_JD)
     sections = sectionize_jd_text(norm)
     section_types = [s[0] for s in sections]
@@ -196,7 +196,7 @@ def test_extract_jd_struct_thermo_fisher():
 
 
 def test_extract_jd_struct_startup():
-    """Startup JD: structured JSON extracted (different format)."""
+    """Startup job description: structured JSON extracted (different format)."""
     norm = normalize_jd_text(STARTUP_JD)
     jd = extract_jd_struct(norm)
 
@@ -213,7 +213,7 @@ def test_extract_jd_struct_startup():
 
 
 def test_chunk_jd_pages_thermo_fisher_count():
-    """Chunk count for Thermo Fisher JD is ~5–25 depending on JD size."""
+    """Chunk count for Thermo Fisher job description is ~5–25 depending on size."""
     page_texts = [(1, THERMO_FISHER_JD)]
     results = chunk_jd_pages(page_texts, min_chars=25)
     assert 5 <= len(results) <= 30
@@ -226,17 +226,19 @@ def test_chunk_jd_pages_thermo_fisher_count():
 
 
 def test_chunk_jd_pages_startup_count():
-    """Chunk count for differently formatted JD is ~5–25 depending on size."""
+    """Chunk count for differently formatted job description is ~5–25 depending on size."""
     page_texts = [(1, STARTUP_JD)]
     results = chunk_jd_pages(page_texts, min_chars=25)
     assert 5 <= len(results) <= 30
 
 
 def test_chunks_have_section_types():
-    """Each chunk has section_type and doc_domain."""
+    """Each chunk has canonical section_type and doc_domain."""
     page_texts = [(1, THERMO_FISHER_JD)]
     results = chunk_jd_pages(page_texts)
+    canonical = {"responsibilities", "qualifications", "tools", "compensation", "about", "other"}
     section_types = {r.section_type for r in results}
+    assert section_types.issubset(canonical), f"Expected canonical types, got {section_types}"
     assert len(section_types) >= 2  # Multiple sections
     assert all(r.doc_domain == JD_DOMAIN for r in results)
     assert all(isinstance(r.skills_detected, list) for r in results)

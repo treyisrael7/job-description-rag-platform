@@ -1,4 +1,4 @@
-"""Add JD extraction fields: documents.jd_extraction_json, chunks.section_type, skills_detected, doc_domain."""
+"""Add job description extraction fields: documents.jd_extraction_json, chunks.section_type, skills_detected, doc_domain."""
 from typing import Sequence, Union
 
 from alembic import op

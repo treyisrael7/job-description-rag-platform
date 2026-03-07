@@ -6,10 +6,13 @@ import uuid
 from sqlalchemy import delete, func, select
 
 from app.core.config import settings
-from app.models import Document, DocumentChunk
+from app.models import Document, DocumentChunk, InterviewSource
+from app.services.chunking import chunk_pages
+from app.services.doc_domain import detect_doc_domain
 from app.services.jd_chunking import chunk_jd_pages
 from app.services.jd_extraction import extract_jd_struct
 from app.services.jd_sections import normalize_jd_text
+from app.services.role_intelligence import infer_role_profile
 from app.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -25,7 +28,7 @@ def _extract_text_per_page(pdf_bytes: bytes) -> list[tuple[int, str]]:
         limit = min(len(doc), settings.max_pdf_pages)
         for i in range(limit):
             page = doc[i]
-            text = page.get_text()
+            text = page.get_text(sort=True)
             result.append((i + 1, text))
             logger.debug(
                 "PDF extraction page=%s text_len=%s",
@@ -67,8 +70,12 @@ def _create_embeddings(texts: list[str]) -> list[list[float]]:
 
 async def run_ingestion(document_id: uuid.UUID) -> None:
     """
-    Background ingestion: download PDF, extract, chunk, embed, store.
-    On success: update document page_count and status=ready.
+    Ingestion flow: Upload job description PDF → extract text → chunk/index → inferRoleProfile → save.
+
+    Order: extract text → chunk (job description or general) → infer_role_profile(jdText) → save role_profile
+    on document → create embeddings → store chunks. roleProfile is used by Interview Setup
+    for domain-aware question generation + RAG evidence.
+    On success: update document page_count, status=ready, role_profile.
     On failure: update status=failed and error_message.
     """
     from app.db.base import async_session_maker
@@ -94,15 +101,33 @@ async def run_ingestion(document_id: uuid.UUID) -> None:
 
             full_text = "\n\n".join(t for _, t in page_texts)
             norm_text = normalize_jd_text(full_text)
-            jd_struct = extract_jd_struct(norm_text)
-            doc.jd_extraction_json = jd_struct
 
-            chunk_results = chunk_jd_pages(
-                page_texts,
-                min_chars=settings.min_chunk_chars,
-                max_chunks=settings.max_chunks_per_doc,
-            )
-            chunk_stats = {"chunks_produced": len(chunk_results), "total_paragraphs": 0}
+            # Auto-detect doc_domain: job_description if >=2 job description signals, else general
+            doc_domain = detect_doc_domain(full_text)
+            doc.doc_domain = doc_domain
+
+            chunk_stats: dict = {}
+            if doc_domain == "job_description":
+                jd_struct = extract_jd_struct(norm_text)
+                doc.jd_extraction_json = jd_struct
+                chunk_results = chunk_jd_pages(
+                    page_texts,
+                    min_chars=settings.min_chunk_chars,
+                    max_chunks=settings.max_chunks_per_doc,
+                )
+            else:
+                chunk_results = chunk_pages(
+                    page_texts,
+                    min_chars=settings.min_chunk_chars,
+                    max_chunks=settings.max_chunks_per_doc,
+                    stats=chunk_stats,
+                )
+            chunk_stats.setdefault("chunks_produced", len(chunk_results))
+            chunk_stats.setdefault("total_paragraphs", 0)
+
+            # Role Intelligence: infer profile after extraction/chunking
+            doc.role_profile = infer_role_profile(full_text)
+
             if not chunk_results:
                 doc.status = "failed"
                 doc.error_message = "No chunks produced after extraction"
@@ -137,10 +162,29 @@ async def run_ingestion(document_id: uuid.UUID) -> None:
 
             await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
 
+            # Get or create JD source for this document (Interview Kit)
+            source_result = await db.execute(
+                select(InterviewSource).where(
+                    InterviewSource.document_id == document_id,
+                    InterviewSource.source_type == "jd",
+                )
+            )
+            source = source_result.scalar_one_or_none()
+            if not source:
+                source = InterviewSource(
+                    document_id=document_id,
+                    source_type="jd",
+                    title=doc.filename or "Job Description",
+                    original_file_name=doc.filename,
+                )
+                db.add(source)
+                await db.flush()
+
             inserted = 0
             for i, (cr, embedding) in enumerate(zip(chunk_results, embeddings)):
                 chunk = DocumentChunk(
                     document_id=document_id,
+                    source_id=source.id,
                     chunk_index=i,
                     content=cr.content,
                     page_number=cr.page_number,
@@ -185,6 +229,39 @@ async def run_ingestion(document_id: uuid.UUID) -> None:
                     inserted,
                     num_rows_in_db,
                 )
+
+            # Competency Map extraction (JD only): RAG-based, runs after chunks are ready
+            if doc_domain == "job_description":
+                try:
+                    from app.services.competency_extraction import extract_competencies
+
+                    comps = await extract_competencies(db, document_id)
+                    if comps is not None:
+                        result = await db.execute(
+                            select(Document).where(Document.id == document_id)
+                        )
+                        doc_for_update = result.scalar_one_or_none()
+                        if doc_for_update:
+                            doc_for_update.competencies = comps
+                            await db.commit()
+                            logger.info(
+                                "Competency extraction: stored %s competencies document_id=%s",
+                                len(comps),
+                                document_id,
+                            )
+                    else:
+                        logger.info(
+                            "Competency extraction: skipped or failed document_id=%s",
+                            document_id,
+                        )
+                except Exception as comp_err:
+                    logger.warning(
+                        "Competency extraction failed (non-fatal): %s document_id=%s",
+                        comp_err,
+                        document_id,
+                        exc_info=True,
+                    )
+                    # Do not fail ingestion; competencies can be re-run later
 
         except Exception as e:
             await db.rollback()

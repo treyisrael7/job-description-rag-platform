@@ -1,5 +1,5 @@
 {
-  "name": "rag-assistant",
+  "name": "interview-os",
   "version": "0.1.0",
   "private": true,
   "overrides": {
@@ -10,8 +10,9 @@
     "packages/*"
   ],
   "scripts": {
-    "dev:web": "npm run dev -w @rag-assistant/web",
-    "build:web": "npm run build -w @rag-assistant/web",
-    "build:shared": "npm run build -w @rag-assistant/shared"
+    "dev:web": "npm run dev -w @interview-os/web",
+    "build:web": "npm run build -w @interview-os/web",
+    "build:shared": "npm run build -w @interview-os/shared",
+    "test:web": "npm run test -w @interview-os/web"
   }
 }

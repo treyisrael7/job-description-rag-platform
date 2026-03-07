@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { GradientShell } from "@/components/GradientShell";
+import { InterviewFocusMode } from "@/components/interview/InterviewFocusMode";
 import {
   getDocument,
   ask,
+  deleteDocument,
   ApiError,
   type DocumentSummary,
   type AskResponse,
@@ -20,16 +23,29 @@ const STATUS_LABELS: Record<string, string> = {
   failed: "Failed",
 };
 
-export default function DocumentChatPage() {
+const STATUS_STYLES: Record<string, string> = {
+  pending: "text-amber-700 bg-amber-100/80 ring-1 ring-amber-200/60",
+  uploaded: "text-blue-700 bg-blue-100/80 ring-1 ring-blue-200/60",
+  processing:
+    "text-indigo-700 bg-indigo-100/80 ring-1 ring-indigo-200/60 animate-pulse",
+  ready: "text-emerald-700 bg-emerald-100/80 ring-1 ring-emerald-200/60",
+  failed: "text-red-700 bg-red-100/80 ring-1 ring-red-200/60",
+};
+
+type Tab = "chat" | "interview";
+
+const TAB_BASE =
+  "rounded-t-lg px-4 py-2.5 text-sm font-medium transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-zenodrift-accent focus-visible:ring-offset-2 focus-visible:ring-offset-white";
+
+export default function DocumentPage() {
   const params = useParams();
+  const router = useRouter();
   const id = params.id as string;
+  const [deleting, setDeleting] = useState(false);
+  const [tab, setTab] = useState<Tab>("chat");
   const [doc, setDoc] = useState<DocumentSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [question, setQuestion] = useState("");
-  const [asking, setAsking] = useState(false);
-  const [answerData, setAnswerData] = useState<AskResponse | null>(null);
-  const [askError, setAskError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchDoc = useCallback(async () => {
@@ -54,7 +70,6 @@ export default function DocumentChatPage() {
     fetchDoc();
   }, [fetchDoc]);
 
-  // Poll while processing
   useEffect(() => {
     if (!doc || doc.status !== "processing") return;
     pollRef.current = setInterval(fetchDoc, POLL_INTERVAL_MS);
@@ -64,16 +79,184 @@ export default function DocumentChatPage() {
         pollRef.current = null;
       }
     };
-  }, [doc?.status, fetchDoc]); // eslint-disable-line react-hooks/exhaustive-deps -- doc omitted to avoid polling loop
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- doc omitted to avoid polling loop
+  }, [doc?.status, fetchDoc]);
 
   useEffect(() => {
-    if (doc?.status !== "processing") {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+    if (doc?.status !== "processing" && pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
     }
   }, [doc?.status]);
+
+  const showInterviewPrep =
+    doc?.status === "ready" && doc?.doc_domain === "job_description";
+
+  const handleDelete = async () => {
+    if (!doc || !confirm(`Delete "${doc.filename}"? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      await deleteDocument(id);
+      router.push("/dashboard");
+    } catch (e) {
+      setError(
+        e instanceof ApiError ? String(e.detail || e.message) : "Failed to delete document"
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <GradientShell>
+      {loading && (
+        <div className="flex justify-center py-20">
+          <div
+            className="h-10 w-10 animate-spin rounded-full border-2 border-neutral-200 border-t-zenodrift-accent"
+            aria-label="Loading document"
+          />
+        </div>
+      )}
+
+      {error && !doc && (
+        <div
+          className="dashboard-card w-full max-w-2xl border-red-200/50 bg-red-50/60 p-5 text-red-700"
+          role="alert"
+        >
+          {error}
+          <Link
+            href="/dashboard"
+            className="mt-4 block text-sm font-medium text-orange-600 hover:text-orange-700 focus:outline-none focus-visible:underline"
+          >
+            ← Back to dashboard
+          </Link>
+        </div>
+      )}
+
+      {doc && !loading && (
+        <div className="dashboard-card flex flex-col overflow-hidden">
+          {/* Header row */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100/80 px-6 py-4 sm:px-8">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              <Link
+                href="/dashboard"
+                className="shrink-0 text-sm font-medium text-zenodrift-text-muted transition-colors duration-200 hover:text-zenodrift-text focus:outline-none focus-visible:ring-2 focus-visible:ring-zenodrift-accent focus-visible:ring-offset-2 focus-visible:ring-offset-white focus-visible:rounded"
+              >
+                ← Dashboard
+              </Link>
+              <h1
+                className="min-w-0 truncate text-lg font-semibold text-zenodrift-text-strong"
+                title={doc.filename}
+              >
+                {doc.filename}
+              </h1>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+              <span
+                className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${
+                  STATUS_STYLES[doc.status] ??
+                  "bg-slate-100 text-zenodrift-text ring-1 ring-slate-200/60"
+                }`}
+              >
+                {STATUS_LABELS[doc.status] ?? doc.status}
+              </span>
+              {doc.error_message && (
+                <span
+                  className="max-w-[180px] truncate text-xs text-red-600"
+                  title={doc.error_message}
+                >
+                  {doc.error_message}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="mt-4 flex gap-0 border-b border-neutral-100/80 px-6 sm:mt-5 sm:px-8">
+            <button
+              onClick={() => setTab("chat")}
+              role="tab"
+              aria-selected={tab === "chat"}
+              aria-controls="chat-panel"
+              id="chat-tab"
+              className={`${TAB_BASE} -mb-px ${
+                tab === "chat"
+                  ? "border-b-2 border-zenodrift-accent text-zenodrift-text-strong"
+                  : "border-b-2 border-transparent text-zenodrift-text-muted hover:text-zenodrift-text"
+              }`}
+            >
+              Ask
+            </button>
+            {showInterviewPrep && (
+              <button
+                onClick={() => setTab("interview")}
+                role="tab"
+                aria-selected={tab === "interview"}
+                aria-controls="interview-panel"
+                id="interview-tab"
+                className={`${TAB_BASE} -mb-px ${
+                  tab === "interview"
+                    ? "border-b-2 border-zenodrift-accent text-zenodrift-text-strong"
+                    : "border-b-2 border-transparent text-zenodrift-text-muted hover:text-zenodrift-text"
+                }`}
+              >
+                Interview Prep
+              </button>
+            )}
+          </div>
+
+          {/* Tab content area */}
+          <div className="px-6 pt-6 sm:px-8">
+            {doc.status !== "ready" && (
+              <div className="mb-6 rounded-xl bg-amber-50/80 px-4 py-3 text-sm text-amber-800 shadow-sm ring-1 ring-amber-200/50">
+                {doc.status === "processing" && (
+                  <p>Document is being processed. This page will update automatically.</p>
+                )}
+                {doc.status === "failed" && doc.error_message && (
+                  <p>{doc.error_message}</p>
+                )}
+                {(doc.status === "uploaded" || doc.status === "pending") && (
+                  <p>Go to the dashboard and click Process.</p>
+                )}
+              </div>
+            )}
+
+            {tab === "chat" && doc.status === "ready" && (
+              <div id="chat-panel" role="tabpanel" aria-labelledby="chat-tab">
+                <ChatTab documentId={id} />
+              </div>
+            )}
+            {tab === "interview" && showInterviewPrep && doc && (
+              <div
+                id="interview-panel"
+                role="tabpanel"
+                aria-labelledby="interview-tab"
+              >
+                <InterviewFocusMode
+                  documentId={id}
+                  documentFilename={doc.filename}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </GradientShell>
+  );
+}
+
+function ChatTab({ documentId }: { documentId: string }) {
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [answerData, setAnswerData] = useState<AskResponse | null>(null);
+  const [askError, setAskError] = useState<string | null>(null);
 
   const handleAsk = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,7 +266,7 @@ export default function DocumentChatPage() {
     setAskError(null);
     setAnswerData(null);
     try {
-      const res = await ask(id, q);
+      const res = await ask(documentId, q);
       setAnswerData(res);
     } catch (e) {
       setAskError(
@@ -96,165 +279,83 @@ export default function DocumentChatPage() {
     }
   };
 
-  if (loading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-50">
-        <div className="h-10 w-10 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-      </main>
-    );
-  }
-
-  if (error || !doc) {
-    return (
-      <main className="min-h-screen bg-slate-50 px-4 py-8">
-        <div className="mx-auto max-w-2xl">
-          <Link
-            href="/dashboard"
-            className="text-sm text-indigo-600 hover:underline"
-          >
-            ← Back to dashboard
-          </Link>
-          <div className="mt-6 rounded-lg bg-red-50 p-4 text-red-700">
-            {error || "Document not found"}
-          </div>
-        </div>
-      </main>
-    );
-  }
-
   return (
-    <main className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 lg:px-8">
-        <header className="mb-6 flex items-center justify-between">
-          <div>
-            <Link
-              href="/dashboard"
-              className="text-sm text-indigo-600 hover:underline"
-            >
-              ← Dashboard
-            </Link>
-            <h1 className="mt-1 truncate text-xl font-bold text-slate-900">
-              {doc.filename}
-            </h1>
+    <div className="space-y-6">
+      <form onSubmit={handleAsk}>
+        <div className="flex gap-3">
+          <input
+            type="text"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder="Ask a question about this document..."
+            disabled={asking}
+            className="flex-1 rounded-xl border border-slate-200 bg-white/80 px-4 py-3 text-zenodrift-text-strong shadow-sm ring-1 ring-slate-200/60 placeholder-zenodrift-text-muted transition-colors focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400/20 disabled:opacity-70"
+          />
+          <button
+            type="submit"
+            disabled={asking || !question.trim()}
+            className="rounded-xl bg-slate-900 px-6 py-3 font-medium text-white shadow-sm transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 disabled:opacity-50"
+          >
+            {asking ? "..." : "Ask"}
+          </button>
+        </div>
+      </form>
+
+      {askError && (
+        <div
+          className="rounded-xl bg-red-50/80 px-4 py-3 text-red-700 shadow-sm ring-1 ring-red-200/50"
+          role="alert"
+        >
+          {askError}
+        </div>
+      )}
+
+      {answerData && (
+        <section className="pt-4">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zenodrift-text-muted">
+            Answer
+          </h2>
+          <div className="prose prose-slate max-w-none text-zenodrift-text">
+            {answerData.answer.split(/(\[\d+-c\d+\])/g).map((part, i) => {
+              const m = part.match(/^\[(\d+)-c(\d+)\]$/);
+              if (m) {
+                const idx = parseInt(m[2], 10) - 1;
+                const citation = answerData!.citations[idx];
+                return (
+                  <sup
+                    key={i}
+                    className="cursor-help font-medium text-orange-600"
+                    title={citation?.snippet}
+                  >
+                    {part}
+                  </sup>
+                );
+              }
+              return <span key={i}>{part}</span>;
+            })}
           </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={`rounded-full px-3 py-1 text-xs font-medium ${
-                doc.status === "ready"
-                  ? "bg-emerald-100 text-emerald-700"
-                  : doc.status === "processing"
-                    ? "bg-indigo-100 text-indigo-700 animate-pulse"
-                    : doc.status === "failed"
-                      ? "bg-red-100 text-red-700"
-                      : "bg-slate-200 text-slate-700"
-              }`}
-            >
-              {STATUS_LABELS[doc.status] ?? doc.status}
-            </span>
-            {doc.error_message && (
-              <span
-                className="max-w-[200px] truncate text-xs text-red-600"
-                title={doc.error_message}
-              >
-                {doc.error_message}
-              </span>
-            )}
-          </div>
-        </header>
-
-        {doc.status !== "ready" && (
-          <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-800">
-            {doc.status === "processing" && (
-              <p className="text-sm">
-                Document is being processed. This page will update automatically.
-              </p>
-            )}
-            {doc.status === "failed" && doc.error_message && (
-              <p className="text-sm">{doc.error_message}</p>
-            )}
-            {(doc.status === "uploaded" || doc.status === "pending") && (
-              <p className="text-sm">Go to the dashboard and click Process.</p>
-            )}
-          </div>
-        )}
-
-        {doc.status === "ready" && (
-          <>
-            <form onSubmit={handleAsk} className="mb-6">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  placeholder="Ask a question about this document..."
-                  disabled={asking}
-                  className="flex-1 rounded-lg border border-slate-300 px-4 py-3 text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-70"
-                />
-                <button
-                  type="submit"
-                  disabled={asking || !question.trim()}
-                  className="rounded-lg bg-indigo-600 px-6 py-3 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {asking ? "..." : "Ask"}
-                </button>
-              </div>
-            </form>
-
-            {askError && (
-              <div className="mb-6 rounded-lg bg-red-50 p-4 text-red-700">
-                {askError}
-              </div>
-            )}
-
-            {answerData && (
-              <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
-                  Answer
-                </h2>
-                <div className="prose prose-slate max-w-none text-slate-700">
-                  {answerData.answer.split(/(\[\d+-c\d+\])/g).map((part, i) => {
-                    const m = part.match(/^\[(\d+)-c(\d+)\]$/);
-                    if (m) {
-                      const idx = parseInt(m[2], 10) - 1;
-                      const citation = answerData!.citations[idx];
-                      return (
-                        <sup
-                          key={i}
-                          className="cursor-help font-medium text-indigo-600"
-                          title={citation?.snippet}
-                        >
-                          {part}
-                        </sup>
-                      );
-                    }
-                    return <span key={i}>{part}</span>;
-                  })}
-                </div>
-                {answerData.citations.length > 0 && (
-                  <div className="mt-6 border-t border-slate-100 pt-4">
-                    <h3 className="mb-2 text-sm font-semibold text-slate-600">
-                      Citations
-                    </h3>
-                    <ul className="space-y-2">
-                      {answerData.citations.map((c) => (
-                        <li
-                          key={c.chunk_id}
-                          className="rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600"
-                        >
-                          <span className="font-mono text-xs text-indigo-600">
-                            [{c.chunk_id}]
-                          </span>{" "}
-                          Page {c.page_number}: {c.snippet}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </section>
-            )}
-          </>
-        )}
-      </div>
-    </main>
+          {answerData.citations.length > 0 && (
+            <div className="mt-6 border-t border-slate-200/80 pt-6">
+              <h3 className="mb-2 text-sm font-semibold text-zenodrift-text">
+                Citations
+              </h3>
+              <ul className="space-y-2">
+                {answerData.citations.map((c) => (
+                  <li
+                    key={c.chunk_id}
+                    className="rounded-lg bg-slate-50/80 px-3 py-2 text-sm text-zenodrift-text"
+                  >
+                    <span className="font-mono text-xs text-orange-600">
+                      [{c.chunk_id}]
+                    </span>{" "}
+                    Page {c.page_number}: {c.snippet}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
+    </div>
   );
 }

@@ -1,3 +1,156 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Warm typography: ink tones instead of pure black */
+:root {
+  --ink: #423f3a;
+  --muted: #6b6560;
+  --heading: #2d2a26;
+}
+
+/* Prevent micro-scroll: lock height, remove default margin, hide horizontal overflow */
+html {
+  height: 100%;
+  margin: 0;
+}
+body {
+  height: 100%;
+  margin: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  color: var(--ink);
+}
+
+/* ============================================
+   Zenodrift: multi-layer atmospheric background
+   Absolutely positioned div layers (no single gradient)
+   ============================================ */
+
+/* Container: stacks all background layers behind content */
+.zenodrift-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Base layer class: all layers fill container */
+.zenodrift-bg-layer {
+  position: absolute;
+  inset: 0;
+}
+
+/* Layer A: Multi-stop base gradient + subtle radial wash for uneven color geography */
+.zenodrift-bg-base {
+  background-image:
+    radial-gradient(
+      ellipse 75% 65% at 55% 38%,
+      rgba(255, 195, 170, 0.28) 0%,
+      rgba(255, 180, 155, 0.14) 40%,
+      rgba(255, 165, 140, 0.06) 65%,
+      transparent 85%
+    ),
+    linear-gradient(
+      135deg,
+      #d94a42 0%,
+      #e85a45 12%,
+      #ff6b45 28%,
+      #ff8555 48%,
+      #ffa078 68%,
+      #ffc8ad 85%,
+      #ffe5d4 100%
+    );
+  background-attachment: fixed;
+}
+
+/* Layer B1: Warm bright radial bloom - stronger center, extends farther before fading */
+.zenodrift-bg-bloom-1 {
+  background-image: radial-gradient(
+    ellipse 90% 60% at 50% 28%,
+    rgba(255, 235, 210, 0.82) 0%,
+    rgba(255, 220, 190, 0.55) 28%,
+    rgba(255, 205, 175, 0.32) 50%,
+    rgba(255, 190, 165, 0.12) 72%,
+    transparent 90%
+  );
+  background-attachment: fixed;
+}
+
+/* Layer B2: Deeper coral bloom - stronger core, extended fade */
+.zenodrift-bg-bloom-2 {
+  background-image: radial-gradient(
+    ellipse 75% 65% at 82% 90%,
+    rgba(255, 110, 80, 0.62) 0%,
+    rgba(255, 95, 70, 0.38) 38%,
+    rgba(245, 80, 58, 0.15) 62%,
+    rgba(235, 70, 52, 0.05) 80%,
+    transparent 95%
+  );
+  background-attachment: fixed;
+}
+
+/* Layer C: Warm vignette - subtle brown/orange tint for depth (not gray) */
+.zenodrift-bg-vignette {
+  background-image: radial-gradient(
+    ellipse 100% 100% at 50% 50%,
+    transparent 48%,
+    rgba(70, 40, 30, 0.06) 75%,
+    rgba(55, 32, 25, 0.11) 92%,
+    rgba(45, 28, 22, 0.14) 100%
+  );
+  background-attachment: fixed;
+}
+
+/* Grid overlay: warm-toned, 4–7% opacity, 30px size, fades toward edges */
+.zenodrift-bg-grid {
+  background-image:
+    linear-gradient(rgba(255, 180, 140, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 180, 140, 0.06) 1px, transparent 1px);
+  background-size: 30px 30px;
+  background-attachment: fixed;
+  mask-image: radial-gradient(
+    ellipse 90% 90% at 50% 50%,
+    black 40%,
+    rgba(0, 0, 0, 0.6) 75%,
+    transparent 100%
+  );
+  -webkit-mask-image: radial-gradient(
+    ellipse 90% 90% at 50% 50%,
+    black 40%,
+    rgba(0, 0, 0, 0.6) 75%,
+    transparent 100%
+  );
+}
+
+/* Prose/typography: warm ink for rich text areas */
+.prose,
+.prose p,
+.prose li,
+.prose span {
+  color: var(--ink);
+}
+.prose strong {
+  color: var(--heading);
+}
+
+/* Hero glass card: interactive elements only, premium frosted surface */
+.hero-glass-card {
+  background: rgb(255 255 255 / 0.5);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgb(255 255 255 / 0.4);
+  border-radius: 1.5rem;
+  box-shadow: 0 4px 24px rgb(0 0 0 / 0.04), 0 1px 4px rgb(0 0 0 / 0.02);
+}
+
+/* Dashboard / content card: frosted surface, soft border, soft shadow */
+.dashboard-card {
+  background: rgb(255 255 255 / 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgb(255 255 255 / 0.35);
+  border-radius: 1.875rem;
+  box-shadow: 0 4px 24px rgb(0 0 0 / 0.05), 0 1px 4px rgb(0 0 0 / 0.03);
+}

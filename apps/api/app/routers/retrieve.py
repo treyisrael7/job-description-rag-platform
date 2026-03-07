@@ -4,7 +4,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,13 +27,17 @@ class RetrieveInput(BaseModel):
     document_id: uuid.UUID
     query: str = Field(..., min_length=1)
     top_k: int = Field(6, ge=1, le=8)
+    source_types: list[str] | None = Field(
+        None,
+        description="Filter to these source types (jd, resume, company, notes). Default: all sources.",
+    )
     include_low_signal: bool = Field(
         False,
         description="If true, include contact/boilerplate chunks (for queries like 'what is their email?')",
     )
     section_types: list[str] | None = Field(
         None,
-        description="Filter to these JD section types (e.g. qualifications, compensation)",
+        description="Filter to these job description section types (e.g. qualifications, compensation)",
     )
     doc_domain: str | None = Field(
         None,
@@ -42,12 +46,18 @@ class RetrieveInput(BaseModel):
 
 
 class RetrievedChunk(BaseModel):
-    chunk_id: str
-    page_number: int
-    snippet: str
+    """Metadata-rich citation: text, score, sourceType, sourceTitle, page (optional), chunkId."""
+
+    text: str
     score: float
+    source_type: str = Field(..., alias="sourceType")
+    source_title: str = Field(..., alias="sourceTitle")
+    page: int | None = None
+    chunk_id: str = Field(..., alias="chunkId")
     is_low_signal: bool = False
     section_type: str | None = None
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
 
 class RetrieveOutput(BaseModel):
@@ -103,10 +113,10 @@ async def retrieve(
 
     section_types = body.section_types
     doc_domain = body.doc_domain
-    if section_types is None and doc.jd_extraction_json:
+    if section_types is None and doc.doc_domain == "job_description":
         section_types = suggest_section_filters(body.query)
-    if doc_domain is None and doc.jd_extraction_json:
-        doc_domain = "job_description"
+    if doc_domain is None and doc.doc_domain:
+        doc_domain = doc.doc_domain
     try:
         chunks = await retrieve_chunks(
             db=db,
@@ -116,9 +126,24 @@ async def retrieve(
             include_low_signal=body.include_low_signal,
             section_types=section_types,
             doc_domain=doc_domain,
+            source_types=body.source_types,
         )
     except Exception as e:
         logger.exception("retrieve_chunks failed")
         raise HTTPException(status_code=503, detail=f"Retrieval failed: {str(e)[:200]}")
 
-    return RetrieveOutput(chunks=[RetrievedChunk(**c) for c in chunks])
+    return RetrieveOutput(
+        chunks=[
+            RetrievedChunk(
+                text=c["text"],
+                score=c["score"],
+                sourceType=c["sourceType"],
+                sourceTitle=c["sourceTitle"],
+                page=c.get("page"),
+                chunkId=c["chunkId"],
+                is_low_signal=c.get("is_low_signal", False),
+                section_type=c.get("section_type"),
+            )
+            for c in chunks
+        ]
+    )

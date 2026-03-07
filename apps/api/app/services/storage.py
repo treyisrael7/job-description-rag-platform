@@ -24,6 +24,11 @@ class StorageBackend(ABC):
         """Download object content as bytes."""
         ...
 
+    @abstractmethod
+    def delete(self, key: str) -> None:
+        """Delete object if it exists. No-op if not found."""
+        ...
+
 
 class S3Storage(StorageBackend):
     def __init__(self, bucket: str, region: str, access_key: str, secret_key: str):
@@ -66,6 +71,12 @@ class S3Storage(StorageBackend):
         resp = self._client.get_object(Bucket=self._bucket, Key=key)
         return resp["Body"].read()
 
+    def delete(self, key: str) -> None:
+        try:
+            self._client.delete_object(Bucket=self._bucket, Key=key)
+        except Exception:
+            pass
+
 
 class LocalStorage(StorageBackend):
     """Dev only. Stores in local dir. Upload via API endpoint, not presigned URL."""
@@ -99,6 +110,12 @@ class LocalStorage(StorageBackend):
         from pathlib import Path
         path = Path(self._base) / key
         return path.read_bytes()
+
+    def delete(self, key: str) -> None:
+        from pathlib import Path
+        path = Path(self._base) / key
+        if path.is_file():
+            path.unlink()
 
 
 def get_storage():

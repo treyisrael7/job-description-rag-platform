@@ -1,15 +1,30 @@
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 
+const isPublicRoute = createRouteMatcher([
+  "/",
+  "/sign-in(.*)",
+  "/sign-up(.*)",
+]);
+
+const isProtectedRoute = createRouteMatcher([
+  "/dashboard(.*)",
+  "/documents(.*)",
+  "/interview(.*)",
+]);
+
 /**
- * Basic Auth middleware - protects entire site when BASIC_AUTH_USER and
- * BASIC_AUTH_PASSWORD are set (production). When not set, site is open (dev).
+ * When Clerk is configured (NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY), use Clerk auth.
+ * Otherwise fall back to Basic Auth if BASIC_AUTH_USER/BASIC_AUTH_PASSWORD are set.
  */
-export function middleware(request: NextRequest) {
+function basicAuthMiddleware(request: NextRequest) {
   const user = process.env.BASIC_AUTH_USER;
   const password = process.env.BASIC_AUTH_PASSWORD;
+  if (!user || !password) return NextResponse.next();
 
-  // Skip auth if credentials not configured (dev mode)
-  if (!user || !password) {
+  // Public paths: no Basic auth required (landing, sign-in, sign-up)
+  const path = (request.nextUrl.pathname || "/").replace(/\/$/, "") || "/";
+  if (path === "/" || path.startsWith("/sign-in") || path.startsWith("/sign-up")) {
     return NextResponse.next();
   }
 
@@ -17,33 +32,46 @@ export function middleware(request: NextRequest) {
   if (!authHeader?.startsWith("Basic ")) {
     return new NextResponse("Authentication required", {
       status: 401,
-      headers: {
-        "WWW-Authenticate": 'Basic realm="RAG Assistant"',
-      },
+      headers: { "WWW-Authenticate": 'Basic realm="InterviewOS"' },
     });
   }
-
-  const encoded = authHeader.slice(6);
-  let decoded: string;
   try {
-    decoded = Buffer.from(encoded, "base64").toString("utf-8");
+    const [u, p] = Buffer.from(authHeader.slice(6), "base64").toString("utf-8").split(":", 2);
+    if (u !== user || p !== password) return new NextResponse("Invalid credentials", { status: 401 });
   } catch {
     return new NextResponse("Invalid credentials", { status: 401 });
   }
+  return NextResponse.next();
+}
 
-  const [u, p] = decoded.split(":", 2);
-  if (u !== user || p !== password) {
-    return new NextResponse("Invalid credentials", { status: 401 });
+const clerkAuthMiddleware = clerkMiddleware(async (auth, req) => {
+  if (isProtectedRoute(req)) await auth.protect();
+});
+
+function isPublicPath(request: NextRequest): boolean {
+  const pathname = request.nextUrl?.pathname ?? new URL(request.url).pathname ?? "/";
+  const path = pathname.replace(/\/$/, "") || "/";
+  if (path === "" || path === "/") return true;
+  return path.startsWith("/sign-in") || path.startsWith("/sign-up");
+}
+
+export default function middleware(
+  request: NextRequest,
+  context: { nextUrl: URL }
+) {
+  // Always allow public paths through first - no auth required
+  if (isPublicPath(request)) {
+    return NextResponse.next();
   }
 
-  return NextResponse.next();
+  if (process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+    return clerkAuthMiddleware(request, context as Parameters<typeof clerkAuthMiddleware>[1]);
+  }
+  return basicAuthMiddleware(request);
 }
 
 export const config = {
   matcher: [
-    /*
-     * Match all paths except static files and _next
-     */
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

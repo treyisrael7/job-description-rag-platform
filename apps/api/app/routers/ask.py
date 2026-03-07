@@ -4,6 +4,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from app.core.auth import get_user_id_from_bearer
 from pydantic import BaseModel, Field
 
 from sqlalchemy import select
@@ -26,7 +27,7 @@ ASK_TOP_K = 6
 
 
 class AskInput(BaseModel):
-    user_id: uuid.UUID
+    user_id: uuid.UUID | None = None
     document_id: uuid.UUID
     question: str = Field(..., min_length=1)
 
@@ -45,6 +46,7 @@ class AskOutput(BaseModel):
 @router.post("", response_model=AskOutput)
 async def ask(
     body: AskInput,
+    user_id_from_auth: uuid.UUID | None = Depends(get_user_id_from_bearer),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -52,11 +54,14 @@ async def ask(
     Retrieves relevant excerpts, builds a grounded prompt, calls OpenAI chat completion.
     Returns answer with citation markers [pN-cM] and a citations list.
     """
+    uid = user_id_from_auth or body.user_id
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
     # Validate document
     result = await db.execute(
         select(Document).where(
             Document.id == body.document_id,
-            Document.user_id == body.user_id,
+            Document.user_id == uid,
         )
     )
     doc = result.scalar_one_or_none()
@@ -83,10 +88,9 @@ async def ask(
         raise HTTPException(status_code=503, detail=f"Embedding failed: {str(e)[:200]}")
 
     section_types = None
-    doc_domain = None
-    if doc.jd_extraction_json:
+    doc_domain = doc.doc_domain or None
+    if doc.doc_domain == "job_description":
         section_types = suggest_section_filters(body.question)
-        doc_domain = "job_description"
 
     try:
         chunks = await retrieve_chunks(
@@ -98,6 +102,17 @@ async def ask(
             section_types=section_types,
             doc_domain=doc_domain,
         )
+        # If section filter (e.g. compensation) returned nothing, retry without filter
+        if not chunks and section_types:
+            chunks = await retrieve_chunks(
+                db=db,
+                document_id=body.document_id,
+                query_embedding=query_embedding,
+                top_k=min(ASK_TOP_K, settings.top_k_max),
+                include_low_signal=False,
+                section_types=None,
+                doc_domain=doc_domain,
+            )
     except Exception as e:
         logger.exception("retrieve_chunks failed")
         raise HTTPException(status_code=503, detail=f"Retrieval failed: {str(e)[:200]}")
