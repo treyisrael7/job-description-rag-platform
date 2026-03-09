@@ -104,6 +104,11 @@ async def ingest_text_source(
         )
         db.add(chunk)
 
+    if source_type == "resume":
+        from app.services.resume_intelligence import extract_resume_profile
+
+        await extract_resume_profile(db, source.id)
+
     await db.commit()
     await db.refresh(source)
     logger.info("ingest_text_source: document_id=%s source_type=%s chunks=%s", document_id, source_type, len(chunk_results))
@@ -173,6 +178,10 @@ async def ingest_resume_pdf(
             embedding=emb,
         )
         db.add(chunk)
+
+    from app.services.resume_intelligence import extract_resume_profile
+
+    await extract_resume_profile(db, source.id)
 
     try:
         storage.delete(s3_key)

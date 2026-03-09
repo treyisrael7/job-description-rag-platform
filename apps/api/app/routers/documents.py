@@ -11,6 +11,7 @@ from app.core.auth import get_user_id_from_bearer
 from app.core.config import settings
 from app.db.session import get_db
 from app.models import Document, DocumentChunk, InterviewSource, User
+from app.services.gap_analysis import generate_gap_analysis
 from app.services.ingestion import run_ingestion
 from app.services.storage import get_storage
 
@@ -662,6 +663,64 @@ class SourceSummary(BaseModel):
     title: str
 
 
+class GapAnalysisInput(BaseModel):
+    user_id: uuid.UUID | None = None
+
+
+class GapCitation(BaseModel):
+    chunkId: str
+    page: int | None = None
+    sourceTitle: str = ""
+    sourceType: str = "jd"
+
+
+class GapEvidenceItem(BaseModel):
+    chunkId: str
+    page: int | None = None
+    snippet: str = ""
+    sourceTitle: str = ""
+    sourceType: str = "jd"
+    retrieval_source: str | None = None
+    semantic_score: float | None = None
+    keyword_score: float | None = None
+    final_score: float | None = None
+
+
+class GapRequirementItem(BaseModel):
+    id: str
+    type: str
+    label: str
+    importance: str
+    description: str | None = None
+    status: str
+    reason: str
+    confidence: str
+    jd_evidence: list[GapEvidenceItem] = []
+    resume_evidence: list[GapEvidenceItem] = []
+
+
+class GapCitedItem(BaseModel):
+    text: str
+    citations: list[GapCitation] = []
+
+
+class ResumeSourceUsed(BaseModel):
+    sourceId: str
+    title: str
+    documentId: str
+
+
+class GapAnalysisOutput(BaseModel):
+    summary: str
+    overall_alignment_score: int
+    matched_requirements: list[GapRequirementItem] = []
+    partial_requirements: list[GapRequirementItem] = []
+    gap_requirements: list[GapRequirementItem] = []
+    strengths_cited: list[GapCitedItem] = []
+    gaps_cited: list[GapCitedItem] = []
+    resume_sources_considered: list[ResumeSourceUsed] = []
+
+
 def _make_source_s3_key(document_id: uuid.UUID, filename: str) -> str:
     safe = re.sub(r"[^\w\.\-]", "_", filename)
     return f"sources/{document_id}/{safe}"
@@ -864,3 +923,38 @@ async def list_sources(
     )
     sources = src_result.scalars().all()
     return [SourceSummary(id=str(s.id), source_type=s.source_type, title=s.title) for s in sources]
+
+
+@router.post("/{document_id}/gap-analysis", response_model=GapAnalysisOutput)
+async def gap_analysis(
+    document_id: uuid.UUID,
+    body: GapAnalysisInput,
+    user_id_from_auth: uuid.UUID | None = Depends(get_user_id_from_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a retrieval-backed resume gap analysis for a job description."""
+    uid = user_id_from_auth or body.user_id
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.user_id == uid,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.status != "ready":
+        raise HTTPException(status_code=400, detail="Document must be ready")
+    if doc.doc_domain != "job_description":
+        raise HTTPException(status_code=400, detail="Gap analysis requires a job description document")
+
+    analysis = await generate_gap_analysis(db, document=doc, user_id=uid)
+    if not analysis.get("resume_sources_considered"):
+        raise HTTPException(
+            status_code=400,
+            detail="No resume source found. Upload an account-level resume or attach a resume source first.",
+        )
+    return GapAnalysisOutput(**analysis)

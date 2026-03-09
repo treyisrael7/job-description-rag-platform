@@ -5,6 +5,7 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import ForeignKey, Index, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,6 +39,7 @@ class InterviewSource(Base):
     title: Mapped[str] = mapped_column(nullable=False)
     original_file_name: Mapped[str | None] = mapped_column(nullable=True)
     url: Mapped[str | None] = mapped_column(nullable=True)
+    profile_json: Mapped[dict | None] = mapped_column(JSONB(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         server_default=text("now()"),
         nullable=False,
