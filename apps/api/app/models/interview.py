@@ -35,6 +35,7 @@ class InterviewSession(Base):
     domain_override: Mapped[str | None] = mapped_column(nullable=True)
     seniority_override: Mapped[str | None] = mapped_column(nullable=True)
     question_mix_override: Mapped[dict | None] = mapped_column(JSONB(), nullable=True)
+    performance_profile: Mapped[dict | None] = mapped_column(JSONB(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         server_default=text("now()"),
         nullable=False,

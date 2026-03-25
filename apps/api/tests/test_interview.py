@@ -360,6 +360,7 @@ async def test_interview_evaluate_success(client, demo_key_off, monkeypatch, for
     user_id = uuid.uuid4()
     doc_id = None
     question_id = None
+    session_id = None
     async with async_session_maker() as db:
         user = User(id=user_id, email="eval-test@t.local")
         db.add(user)
@@ -384,6 +385,7 @@ async def test_interview_evaluate_success(client, demo_key_off, monkeypatch, for
         )
         db.add(session)
         await db.flush()
+        session_id = session.id
         q = InterviewQuestion(
             session_id=session.id,
             type="technical",
@@ -423,6 +425,18 @@ async def test_interview_evaluate_success(client, demo_key_off, monkeypatch, for
     assert len(data["evidence_used"]) == 1
     assert data["evidence_used"][0]["sourceId"] == "aa"
     assert data["evidence_used"][0]["quote"]
+
+    async with async_session_maker() as db:
+        from sqlalchemy import select
+
+        from app.models import InterviewSession
+
+        r = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
+        sess = r.scalar_one()
+        assert sess.performance_profile is not None
+        for k in ("technical", "behavioral", "communication", "overall"):
+            assert k in sess.performance_profile
+            assert isinstance(sess.performance_profile[k], (int, float))
 
 
 # --- GET endpoint tests ---

@@ -17,6 +17,7 @@ from app.services.interview import (
     evaluate_answer_with_retrieval,
     generate_questions,
 )
+from app.services.performance_profile import compute_performance_profile, profile_answer_from_feedback
 from app.services.interview_scoring import build_feedback_summary, compute_score_breakdown
 from app.services.role_intelligence import VALID_DOMAINS, VALID_SENIORITIES
 
@@ -431,6 +432,19 @@ async def evaluate(
         feedback_json=feedback_json,
     )
     db.add(answer)
+    await db.flush()
+
+    ar_profile = await db.execute(
+        select(InterviewAnswer, InterviewQuestion)
+        .join(InterviewQuestion, InterviewAnswer.question_id == InterviewQuestion.id)
+        .where(InterviewQuestion.session_id == session.id)
+        .order_by(InterviewAnswer.created_at.asc())
+    )
+    profile_inputs = [
+        profile_answer_from_feedback(q.type, a.feedback_json) for a, q in ar_profile.all()
+    ]
+    session.performance_profile = compute_performance_profile(profile_inputs)
+
     await db.commit()
     await db.refresh(answer)
 

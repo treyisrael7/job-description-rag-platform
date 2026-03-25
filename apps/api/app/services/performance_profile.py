@@ -71,6 +71,37 @@ def _avg(values: list[float]) -> float | None:
     return sum(values) / len(values)
 
 
+# Stored interview answers keep rubric dimensions under feedback_json.score_breakdown.
+# Omit ``overall`` here so session-level ``overall`` is a mean of dimensions, not diluted by a duplicate aggregate.
+_SCORE_BREAKDOWN_KEYS_FOR_PROFILE = (
+    "relevance_to_context",
+    "completeness",
+    "clarity",
+    "jd_alignment",
+)
+
+
+def profile_answer_from_feedback(
+    question_type: str | None,
+    feedback_json: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Build a dict suitable for :func:`compute_performance_profile` from a stored answer row.
+
+    Uses ``question_type`` and numeric rubric dimensions from ``feedback_json["score_breakdown"]``.
+    """
+    qt = _normalize_question_type(question_type)
+    fb = dict(feedback_json) if isinstance(feedback_json, Mapping) else {}
+    breakdown = fb.get("score_breakdown")
+    scores: dict[str, Any] = {}
+    if isinstance(breakdown, Mapping):
+        for key in _SCORE_BREAKDOWN_KEYS_FOR_PROFILE:
+            x = _coerce_float(breakdown.get(key))
+            if x is not None:
+                scores[key] = x
+    return {"question_type": qt, "scores_json": scores}
+
+
 def _resolve_answer(answer: Any) -> tuple[str, dict[str, Any]]:
     """Support dict-like rows and objects with question_type / scores_json."""
     if isinstance(answer, Mapping):
