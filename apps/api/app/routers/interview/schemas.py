@@ -121,6 +121,8 @@ class SessionDetail(BaseModel):
     created_at: str
     questions: list[InterviewQuestionOutput]
     role_profile: RoleProfileOut | None = None
+    performance_profile: dict | None = None
+    adaptive_focus_label: str | None = None
 
 
 class QuestionDetail(BaseModel):

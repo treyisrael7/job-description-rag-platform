@@ -93,24 +93,6 @@ async def generate(
     if not competencies or not isinstance(competencies, list):
         competencies = []
 
-    try:
-        raw_questions = await generate_questions(
-            db=db,
-            document_id=body.document_id,
-            num_questions=body.num_questions,
-            role_profile=role_profile,
-            competencies=competencies,
-        )
-    except Exception as e:
-        logger.exception("generate_questions failed")
-        raise HTTPException(status_code=503, detail=f"Question generation failed: {str(e)[:200]}")
-
-    if not raw_questions:
-        raise HTTPException(
-            status_code=400,
-            detail="No questions generated. Ensure document has competencies or sections (e.g. responsibilities, qualifications).",
-        )
-
     session = InterviewSession(
         user_id=current_user.id,
         document_id=body.document_id,
@@ -125,6 +107,25 @@ async def generate(
     )
     db.add(session)
     await db.flush()
+
+    try:
+        raw_questions = await generate_questions(
+            db=db,
+            document_id=body.document_id,
+            num_questions=body.num_questions,
+            role_profile=role_profile,
+            competencies=competencies,
+            session_id=session.id,
+        )
+    except Exception as e:
+        logger.exception("generate_questions failed")
+        raise HTTPException(status_code=503, detail=f"Question generation failed: {str(e)[:200]}")
+
+    if not raw_questions:
+        raise HTTPException(
+            status_code=400,
+            detail="No questions generated. Ensure document has competencies or sections (e.g. responsibilities, qualifications).",
+        )
 
     for rq in raw_questions:
         rubric_json = {

@@ -37,6 +37,8 @@ export interface SessionData {
   questions: InterviewQuestion[];
   mode: string;
   difficulty: string;
+  performanceProfile?: Record<string, number> | null;
+  adaptiveFocusLabel?: string | null;
 }
 
 interface InterviewSessionViewProps {
@@ -58,7 +60,16 @@ export function InterviewSessionView({
   const [answerText, setAnswerText] = useState("");
   const [evalResult, setEvalResult] = useState<InterviewEvaluateResponse | null>(null);
   const [evalError, setEvalError] = useState<string | null>(null);
-  const evaluateMutation = useEvaluateAnswerMutation(documentId);
+  const evaluateMutation = useEvaluateAnswerMutation(
+    documentId,
+    session.sessionId
+  );
+
+  const adaptiveModeActive = Boolean(
+    session.performanceProfile &&
+      Object.keys(session.performanceProfile).length > 0
+  );
+  const focusLine = session.adaptiveFocusLabel?.trim() ?? null;
   const [evalDrawerOpen, setEvalDrawerOpen] = useState(false);
   const [referenceDrawerOpen, setReferenceDrawerOpen] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -124,6 +135,24 @@ export function InterviewSessionView({
             </Link>
           )}
         </div>
+
+        {adaptiveModeActive && (
+          <div className="shrink-0 border-b border-white/20 bg-zenodrift-accent/8 px-3 py-2 sm:px-4">
+            <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+              <span className="inline-flex w-fit items-center rounded-full bg-zenodrift-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zenodrift-accent">
+                Adaptive Mode Active
+              </span>
+              {focusLine && (
+                <p className="text-xs text-zenodrift-text-strong">
+                  Focusing on:{" "}
+                  <span className="font-medium text-zenodrift-text">
+                    {focusLine}
+                  </span>
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Question area - scrollable */}
         <div

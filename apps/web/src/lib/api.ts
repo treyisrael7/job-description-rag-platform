@@ -405,6 +405,10 @@ export interface InterviewSessionDetail {
   created_at: string;
   questions: InterviewQuestion[];
   role_profile?: RoleProfile | null;
+  /** Present after at least one evaluated answer; drives adaptive question generation. */
+  performance_profile?: Record<string, number> | null;
+  /** Human-readable focus derived from performance_profile (server-computed). */
+  adaptive_focus_label?: string | null;
 }
 
 export interface InterviewGenerateOverrides {

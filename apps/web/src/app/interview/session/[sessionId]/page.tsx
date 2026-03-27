@@ -69,6 +69,8 @@ export default function InterviewSessionPage() {
             difficulty:
               session.difficulty.charAt(0).toUpperCase() +
               session.difficulty.slice(1),
+            performanceProfile: session.performance_profile ?? null,
+            adaptiveFocusLabel: session.adaptive_focus_label ?? null,
           }}
           onNewSessionHref={`/interview/setup/${session.document_id}`}
           backHref="/dashboard"

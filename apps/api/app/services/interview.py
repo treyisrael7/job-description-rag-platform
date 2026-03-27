@@ -10,7 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models import Document, InterviewSource
+from app.models import Document, InterviewAnswer, InterviewQuestion, InterviewSession, InterviewSource
+from app.services.adaptive_engine import select_next_question_type
 from app.services.jd_sections import normalize_jd_text
 from app.services.retrieval import embed_query, retrieve_chunks
 
@@ -178,14 +179,74 @@ async def _retrieve_evidence_for_competency(
     ]
 
 
+_ADAPTIVE_TO_CANONICAL_TYPE: dict[str, str] = {
+    "technical": "role_specific",
+    "behavioral": "behavioral",
+    "behavioral_followup": "behavioral",
+    "hard": "scenario",
+}
+
+
+def _prompt_question_type(canonical_type: str, adaptive_target: str | None) -> str:
+    """
+    User-facing question type label injected into the generation prompt.
+    Matches adaptive_engine outputs; maps mix-based canonical types when not adaptive.
+    """
+    if adaptive_target in ("technical", "behavioral", "behavioral_followup", "hard"):
+        return adaptive_target
+    if canonical_type == "behavioral":
+        return "behavioral"
+    if canonical_type == "role_specific":
+        return "technical"
+    if canonical_type == "scenario":
+        return "hard"
+    return "behavioral"
+
+
+def _feedback_from_answer_row(answer: InterviewAnswer) -> dict[str, list[str]]:
+    """Normalize strengths/gaps from stored answer columns and feedback_json."""
+    strengths: list[str] = []
+    gaps: list[str] = []
+    if isinstance(answer.strengths, list):
+        strengths = [str(x).strip() for x in answer.strengths if str(x).strip()]
+    if isinstance(answer.weaknesses, list):
+        gaps = [str(x).strip() for x in answer.weaknesses if str(x).strip()]
+    fj = answer.feedback_json if isinstance(answer.feedback_json, dict) else {}
+    if not strengths:
+        s = fj.get("strengths")
+        if isinstance(s, list):
+            strengths = [str(x).strip() for x in s if str(x).strip()]
+    if not gaps:
+        g = fj.get("gaps")
+        if isinstance(g, list):
+            gaps = [str(x).strip() for x in g if str(x).strip()]
+    return {"strengths": strengths, "gaps": gaps}
+
+
+def _format_feedback_lines(items: list[str]) -> str:
+    if not items:
+        return "(none recorded)"
+    return "; ".join(items)
+
+
 def _generate_single_question(
     competency_id: str,
     competency_label: str,
-    question_type: str,
+    canonical_question_type: str,
     evidence: list[dict],
     role_profile: dict,
+    adaptive_target: str | None = None,
+    last_answer_feedback: dict[str, list[str]] | None = None,
 ) -> dict | None:
-    """Generate one question for a competency using its evidence. Returns None if no evidence."""
+    """Generate one question for a competency using its evidence. Returns None if no evidence.
+
+    ``canonical_question_type`` is stored on the question row (behavioral | role_specific | scenario).
+    The prompt injects ``question_type`` (technical | behavioral | behavioral_followup | hard) via
+    :func:`_prompt_question_type`.
+
+    For ``behavioral_followup``, ``last_answer_feedback`` may contain ``strengths`` and ``gaps`` from
+    the most recent evaluated answer in the session.
+    """
     if not evidence or not settings.openai_api_key:
         return None
 
@@ -201,28 +262,56 @@ def _generate_single_question(
     seniority = role_profile.get("seniority", "entry")
     seniority_hint = "entry-level" if seniority == "entry" else "mid-level" if seniority == "mid" else "senior-level"
 
-    system_prompt = f"""You are an expert hiring manager. Create ONE interview question for the competency "{competency_label}".
+    question_type = _prompt_question_type(canonical_question_type, adaptive_target)
 
-QUESTION TYPE: {question_type}
-- behavioral: Past experience, STAR format, "Tell me about a time..."
-- role_specific: Domain knowledge/skills for this competency
-- scenario: Hypothetical "What would you do if..." situation
+    followup_context = ""
+    user_followup = ""
+    if question_type == "behavioral_followup":
+        fb = last_answer_feedback or {}
+        strengths_items = [str(x).strip() for x in (fb.get("strengths") or []) if str(x).strip()]
+        gaps_items = [str(x).strip() for x in (fb.get("gaps") or []) if str(x).strip()]
+        strengths_txt = _format_feedback_lines(strengths_items)
+        gaps_txt = _format_feedback_lines(gaps_items)
+        followup_context = f"""
 
+PRIOR ANSWER FEEDBACK (target the follow-up):
+Strengths noted: {strengths_txt}
+
+The candidate previously showed weaknesses in: {gaps_txt}
+
+Generate a follow-up question that specifically probes this weakness."""
+        user_followup = """
+
+The follow-up must directly address the weaknesses above; if none were recorded, infer a plausible gap from the competency and JD and still probe deeply."""
+
+    system_prompt = f"""You are generating an interview question.
+
+Question type: {question_type}
+
+- If technical: focus on role-specific technical skills
+- If behavioral: ask STAR-style questions
+- If behavioral_followup: ask a deeper probing follow-up question based on previous answer weaknesses
+- If hard: increase difficulty, ambiguity, or depth
+
+Ground all questions in the provided job description context.
+
+Competency: "{competency_label}"
 SENIORITY: {seniority} ({seniority_hint})
-DOMAIN: {domain}
+DOMAIN: {domain}{followup_context}
 
 RULES:
-1. The question MUST clearly reflect the JD evidence excerpts below.
-2. Ground the question in specific requirements/skills from the excerpts.
+1. Follow the question type above; shape the line of questioning as: behavioral / role-specific skills / scenario as appropriate to that type.
+2. The question MUST be grounded in the job description excerpts in the user message.
 3. whatGoodLooksLike: 2-4 bullets describing what a strong answer covers.
 4. Output valid JSON only: {{"question": "...", "whatGoodLooksLike": ["...","..."]}}"""
 
     user_content = f"""Competency: {competency_label}
 
-Job description excerpts:
+Job description context:
 {excerpts_text}
 
-Generate exactly 1 {question_type} question. Output JSON only."""
+Generate exactly one interview question per the system instructions (question type: {question_type}).{user_followup}
+Output JSON only."""
 
     try:
         from openai import OpenAI
@@ -264,7 +353,7 @@ Generate exactly 1 {question_type} question. Output JSON only."""
         ]
 
         return {
-            "type": question_type,
+            "type": canonical_question_type,
             "competencyId": competency_id,
             "competencyLabel": competency_label,
             "questionText": question_text,
@@ -283,6 +372,7 @@ async def generate_questions(
     num_questions: int,
     role_profile: dict,
     competencies: list[dict],
+    session_id: uuid.UUID | None = None,
 ) -> list[dict]:
     """
     Generate questions tied to competencies. Each question uses retrieval for that competency.
@@ -293,6 +383,11 @@ async def generate_questions(
         num_questions: Number of questions to generate
         role_profile: { domain, seniority, questionMix }
         competencies: List of { id, label, description?, evidence? }
+        session_id: When set, loads ``InterviewSession.performance_profile``; if present,
+            :func:`app.services.adaptive_engine.select_next_question_type` drives each
+            question (otherwise question mix uses ``questionMix`` as before). Also loads the
+            latest ``InterviewAnswer`` in that session so ``behavioral_followup`` can use
+            strengths/gaps from the prior evaluation.
 
     Returns list of {
         id (placeholder, assigned by DB),
@@ -329,6 +424,27 @@ async def generate_questions(
     comps = comps[: num_questions] if len(comps) > num_questions else comps
     results = []
 
+    performance_profile_dict: dict | None = None
+    last_answer_feedback: dict[str, list[str]] | None = None
+    if session_id is not None:
+        sess_row = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
+        sess_obj = sess_row.scalar_one_or_none()
+        if sess_obj is not None:
+            raw_profile = getattr(sess_obj, "performance_profile", None)
+            if isinstance(raw_profile, dict) and raw_profile:
+                performance_profile_dict = raw_profile
+
+            ans_row = await db.execute(
+                select(InterviewAnswer)
+                .join(InterviewQuestion, InterviewAnswer.question_id == InterviewQuestion.id)
+                .where(InterviewQuestion.session_id == session_id)
+                .order_by(InterviewAnswer.created_at.desc())
+                .limit(1)
+            )
+            last_ans = ans_row.scalar_one_or_none()
+            if last_ans is not None:
+                last_answer_feedback = _feedback_from_answer_row(last_ans)
+
     for i, comp in enumerate(comps):
         if len(results) >= num_questions:
             break
@@ -343,13 +459,24 @@ async def generate_questions(
             logger.info("No evidence for competency=%s, skipping", comp_label)
             continue
 
-        q_type = type_cycle[i % len(type_cycle)] if type_cycle else "behavioral"
+        adaptive_target: str | None = None
+        if performance_profile_dict is not None:
+            adaptive_target = select_next_question_type(performance_profile_dict)
+            q_type = _ADAPTIVE_TO_CANONICAL_TYPE.get(adaptive_target)
+            if not q_type:
+                q_type = type_cycle[i % len(type_cycle)] if type_cycle else "behavioral"
+                adaptive_target = None
+        else:
+            q_type = type_cycle[i % len(type_cycle)] if type_cycle else "behavioral"
+
         q = _generate_single_question(
             competency_id=comp_id,
             competency_label=comp_label,
-            question_type=q_type,
+            canonical_question_type=q_type,
             evidence=evidence,
             role_profile=rp,
+            adaptive_target=adaptive_target,
+            last_answer_feedback=last_answer_feedback,
         )
         if q and q.get("questionText"):
             results.append(q)

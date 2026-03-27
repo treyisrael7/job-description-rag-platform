@@ -12,6 +12,7 @@ from app.models import InterviewQuestion, InterviewSession, User
 from app.routers.interview.helpers import from_rubric, norm_question_type_for_api, question_to_output, to_role_profile_out
 from app.routers.interview.router import router
 from app.routers.interview.schemas import EvidenceItem, QuestionDetail, SessionDetail, SessionSummary
+from app.services.adaptive_engine import adaptive_focus_label
 
 
 @router.get("/sessions", response_model=list[SessionSummary])
@@ -66,6 +67,9 @@ async def get_session(
     )
     questions = q_result.scalars().all()
 
+    raw_pp = getattr(session, "performance_profile", None)
+    pp_dict = raw_pp if isinstance(raw_pp, dict) and raw_pp else None
+
     return SessionDetail(
         id=session.id,
         user_id=session.user_id,
@@ -75,6 +79,8 @@ async def get_session(
         created_at=session.created_at.isoformat() if session.created_at else "",
         role_profile=to_role_profile_out(getattr(session, "role_profile_json", None)),
         questions=[question_to_output(q) for q in questions],
+        performance_profile=pp_dict,
+        adaptive_focus_label=adaptive_focus_label(pp_dict),
     )
 
 

@@ -4,7 +4,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { evaluateAnswer } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
 
-export function useEvaluateAnswerMutation(documentId: string) {
+export function useEvaluateAnswerMutation(
+  documentId: string,
+  sessionId?: string
+) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (args: { questionId: string; answerText: string }) =>
@@ -13,6 +16,9 @@ export function useEvaluateAnswerMutation(documentId: string) {
       qc.invalidateQueries({ queryKey: queryKeys.document(documentId) });
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
       qc.invalidateQueries({ queryKey: queryKeys.interviewAnalyticsOverview() });
+      if (sessionId) {
+        qc.invalidateQueries({ queryKey: queryKeys.interview(sessionId) });
+      }
     },
   });
 }
