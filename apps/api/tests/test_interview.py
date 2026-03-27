@@ -342,19 +342,53 @@ async def test_interview_evaluate_success(client, demo_key_off, monkeypatch, for
     async def _mock_evaluate(*args, **kwargs):
         return {
             "score": 7.0,
-            "strengths": ["Mentioned Python experience"],
-            "gaps": ["No AWS specifics"],
+            "summary": "The answer shows solid Python experience but lacks AWS detail required by the JD.",
+            "score_reasoning": "The rubric asks for concrete examples; strengths match Python, but gaps show missing AWS per JD.",
+            "strengths": [
+                {
+                    "text": "Mentioned Python experience",
+                    "evidence": "I have 5 years of Python experience.",
+                    "highlight": "I have 5 years of Python experience.",
+                    "impact": "The JD emphasizes Python for this role; demonstrating tenure signals you can contribute on day one.",
+                }
+            ],
+            "gaps": [
+                {
+                    "text": "I have 5 years of Python experience.",
+                    "missing": "No AWS tools, scale, or concrete examples.",
+                    "expected": "JD requires hands-on AWS; the listed snippet ties Python to AWS.",
+                    "jd_alignment": "The answer only states Python tenure; it does not match the JD’s AWS expectation.",
+                    "improvement": "I've used Python for five years, including building services on AWS with Lambda and S3 at scale.",
+                }
+            ],
+            "citations": [{"chunk_id": "aa", "page_number": 1, "text": "Python, AWS"}],
+            "strengths_cited": [
+                {
+                    "text": "Mentioned Python experience",
+                    "citations": [
+                        {"chunkId": "aa", "page": 1, "sourceTitle": "", "sourceType": "jd"}
+                    ],
+                }
+            ],
+            "gaps_cited": [],
             "improved_answer": "I built ML pipelines on AWS...",
             "follow_up_questions": ["Which AWS services?", "Scale of data?"],
             "evidence_used": [
-                {"quote": "Python, AWS", "sourceId": "aa", "page": 1, "chunkId": "aa"}
+                {
+                    "quote": "Python, AWS",
+                    "sourceId": "aa",
+                    "sourceType": "jd",
+                    "sourceTitle": "",
+                    "page": 1,
+                    "chunkId": "aa",
+                }
             ],
             "evidence_for_scoring": [
                 {"snippet": "Python, AWS, scalability, collaboration, concrete examples"},
             ],
         }
 
-    monkeypatch.setattr("app.routers.interview.runtime.evaluate_answer_with_retrieval", _mock_evaluate)
+    monkeypatch.setattr("app.routers.interview.generate_evaluate.evaluate_answer_with_retrieval", _mock_evaluate)
     monkeypatch.setattr(settings, "openai_api_key", "sk-test")
 
     user_id = uuid.uuid4()
@@ -412,13 +446,22 @@ async def test_interview_evaluate_success(client, demo_key_off, monkeypatch, for
     assert resp.status_code == 200
     data = resp.json()
     assert "answer_id" in data
+    assert data.get("summary")
     assert 0 <= data["score"] <= 100
+    assert 0 <= data["llm_score"] <= 10
+    assert data["citations"] and data["citations"][0]["chunk_id"] == "aa"
     assert "score_breakdown" in data
     for k in ("relevance_to_context", "completeness", "clarity", "jd_alignment", "overall"):
         assert k in data["score_breakdown"]
     assert "feedback_summary" in data and data["feedback_summary"]
     assert "strengths" in data
     assert "gaps" in data
+    assert data.get("evaluation_json") is not None
+    assert data["evaluation_json"]["score"] == 7.0
+    assert data.get("score_reasoning")
+    assert data["evaluation_json"].get("score_reasoning")
+    assert "strengths" in data["evaluation_json"]
+    assert "citations" in data["evaluation_json"]
     assert "improved_answer" in data
     assert "follow_up_questions" in data
     assert "evidence_used" in data
@@ -668,6 +711,7 @@ async def test_interview_session_analytics(client, demo_key_off, force_auth):
                     strengths=[],
                     weaknesses=[],
                     feedback_json={"score_breakdown": {}},
+                    evaluation_json={},
                 )
             )
         await db.commit()
@@ -776,6 +820,7 @@ async def test_interview_analytics_overview(client, demo_key_off, force_auth):
                 strengths=[],
                 weaknesses=[],
                 feedback_json={"score_breakdown": {}},
+                evaluation_json={},
             )
         )
         await db.commit()

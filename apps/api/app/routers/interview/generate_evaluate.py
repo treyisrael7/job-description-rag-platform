@@ -17,13 +17,16 @@ from app.routers.interview.runtime import evaluate_answer_with_retrieval, genera
 from app.routers.interview.schemas import (
     CitationItem,
     CitedItem,
+    EvaluationCitationOut,
     EvidenceUsedItem,
+    GapEvalItem,
     InterviewEvaluateInput,
     InterviewEvaluateOutput,
     InterviewGenerateInput,
     InterviewGenerateOutput,
     QUESTION_MIX_PRESETS,
     ScoreBreakdownOut,
+    StrengthEvalItem,
 )
 from app.services.performance_profile import compute_performance_profile, profile_answer_from_feedback
 from app.services.interview_scoring import build_feedback_summary, compute_score_breakdown
@@ -246,12 +249,74 @@ async def evaluate(
     if evaluation.get("suggested_followup") and not follow_ups:
         follow_ups = [evaluation["suggested_followup"]]
 
-    strengths_list = list(evaluation.get("strengths") or [])
-    gaps_list = list(evaluation.get("gaps") or [])
+    llm_score = float(evaluation.get("score") or 0.0)
+    eval_summary = str(evaluation.get("summary") or "").strip()
+    score_reasoning = str(evaluation.get("score_reasoning") or "").strip()
+    strengths_raw = list(evaluation.get("strengths") or [])
+    gaps_raw = list(evaluation.get("gaps") or [])
+    citations_raw = list(evaluation.get("citations") or [])
 
-    feedback_json = {
+    def _strength_items(raw: list) -> list[dict]:
+        out: list[dict] = []
+        for x in raw:
+            if isinstance(x, dict):
+                out.append(
+                    {
+                        "text": str(x.get("text", "")).strip(),
+                        "evidence": str(x.get("evidence", "")).strip(),
+                        "highlight": str(x.get("highlight", "")).strip(),
+                        "impact": str(x.get("impact", "")).strip(),
+                    }
+                )
+            elif isinstance(x, str) and x.strip():
+                out.append({"text": x.strip(), "evidence": "", "highlight": "", "impact": ""})
+        return out
+
+    def _gap_items(raw: list) -> list[dict]:
+        out: list[dict] = []
+        for x in raw:
+            if isinstance(x, dict):
+                out.append(
+                    {
+                        "text": str(x.get("text", "")).strip(),
+                        "missing": str(x.get("missing", "")).strip(),
+                        "expected": str(x.get("expected", "")).strip(),
+                        "jd_alignment": str(x.get("jd_alignment", "")).strip(),
+                        "improvement": str(x.get("improvement", "")).strip(),
+                    }
+                )
+            elif isinstance(x, str) and x.strip():
+                out.append(
+                    {
+                        "text": x.strip(),
+                        "missing": "",
+                        "expected": "",
+                        "jd_alignment": "",
+                        "improvement": "",
+                    }
+                )
+        return out
+
+    strengths_list = _strength_items(strengths_raw)
+    gaps_list = _gap_items(gaps_raw)
+
+    evaluation_json_payload = {
+        "score": llm_score,
+        "summary": eval_summary,
+        "score_reasoning": score_reasoning,
         "strengths": strengths_list,
         "gaps": gaps_list,
+        "citations": citations_raw,
+        "improved_answer": str(evaluation.get("improved_answer") or "").strip(),
+    }
+
+    feedback_json = {
+        "score": llm_score,
+        "summary": eval_summary,
+        "score_reasoning": score_reasoning,
+        "strengths": strengths_list,
+        "gaps": gaps_list,
+        "citations": citations_raw,
         "strengths_cited": evaluation.get("strengths_cited", []),
         "gaps_cited": evaluation.get("gaps_cited", []),
         "improved_answer": evaluation["improved_answer"],
@@ -259,7 +324,7 @@ async def evaluate(
         "suggested_followup": evaluation.get("suggested_followup"),
         "evidence_used": evaluation["evidence_used"],
         "score_breakdown": score_breakdown,
-        "llm_score_0_10": evaluation.get("score"),
+        "llm_score_0_10": llm_score,
     }
 
     answer = InterviewAnswer(
@@ -270,6 +335,7 @@ async def evaluate(
         strengths=strengths_list,
         weaknesses=gaps_list,
         feedback_json=feedback_json,
+        evaluation_json=evaluation_json_payload,
     )
     db.add(answer)
     await db.flush()
@@ -306,9 +372,22 @@ async def evaluate(
                 )
         return CitedItem(text=str(item.get("text", "")), citations=cites)
 
+    citation_models = [
+        EvaluationCitationOut(
+            chunk_id=str(c.get("chunk_id") or c.get("chunkId") or ""),
+            page_number=int(c.get("page_number", 0) or 0),
+            text=str(c.get("text", "")),
+        )
+        for c in citations_raw
+        if isinstance(c, dict) and (c.get("chunk_id") or c.get("chunkId"))
+    ]
+
     return InterviewEvaluateOutput(
         answer_id=answer.id,
         score=final_score,
+        llm_score=llm_score,
+        summary=eval_summary,
+        score_reasoning=score_reasoning,
         score_breakdown=ScoreBreakdownOut(
             relevance_to_context=score_breakdown["relevance_to_context"],
             completeness=score_breakdown["completeness"],
@@ -317,12 +396,14 @@ async def evaluate(
             overall=score_breakdown["overall"],
         ),
         feedback_summary=feedback_summary,
-        strengths=strengths_list,
-        gaps=gaps_list,
+        strengths=[StrengthEvalItem(**s) for s in strengths_list],
+        gaps=[GapEvalItem(**g) for g in gaps_list],
+        citations=citation_models,
         strengths_cited=[_to_cited(s) for s in strengths_cited if isinstance(s, dict)],
         gaps_cited=[_to_cited(g) for g in gaps_cited if isinstance(g, dict)],
         improved_answer=evaluation["improved_answer"],
         follow_up_questions=follow_ups,
         suggested_followup=evaluation.get("suggested_followup"),
         evidence_used=[EvidenceUsedItem(**e) for e in evidence_used],
+        evaluation_json=evaluation_json_payload,
     )

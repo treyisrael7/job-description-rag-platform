@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import assert_resource_ownership, get_current_user
 from app.db.session import get_db
-from app.models import InterviewQuestion, InterviewSession, User
+from app.models import InterviewAnswer, InterviewQuestion, InterviewSession, User
 from app.routers.interview.helpers import from_rubric, norm_question_type_for_api, question_to_output, to_role_profile_out
 from app.routers.interview.router import router
 from app.routers.interview.schemas import EvidenceItem, QuestionDetail, SessionDetail, SessionSummary
@@ -67,6 +67,18 @@ async def get_session(
     )
     questions = q_result.scalars().all()
 
+    q_ids = [q.id for q in questions]
+    latest_by_question: dict = {}
+    if q_ids:
+        ar = await db.execute(
+            select(InterviewAnswer)
+            .where(InterviewAnswer.question_id.in_(q_ids))
+            .order_by(InterviewAnswer.created_at.desc())
+        )
+        for a in ar.scalars().all():
+            if a.question_id not in latest_by_question:
+                latest_by_question[a.question_id] = a
+
     raw_pp = getattr(session, "performance_profile", None)
     pp_dict = raw_pp if isinstance(raw_pp, dict) and raw_pp else None
 
@@ -78,7 +90,9 @@ async def get_session(
         difficulty=session.difficulty,
         created_at=session.created_at.isoformat() if session.created_at else "",
         role_profile=to_role_profile_out(getattr(session, "role_profile_json", None)),
-        questions=[question_to_output(q) for q in questions],
+        questions=[
+            question_to_output(q, latest_by_question.get(q.id)) for q in questions
+        ],
         performance_profile=pp_dict,
         adaptive_focus_label=adaptive_focus_label(pp_dict),
     )
@@ -106,6 +120,16 @@ async def get_question(
     assert_resource_ownership(row[1], current_user)
     bullets, evidence, key_topics, focus_area, _, comp_id, comp_label, _ = from_rubric(question.rubric_json)
 
+    ans_r = await db.execute(
+        select(InterviewAnswer)
+        .where(InterviewAnswer.question_id == question_id)
+        .order_by(InterviewAnswer.created_at.desc())
+        .limit(1)
+    )
+    latest_a = ans_r.scalar_one_or_none()
+    ej = getattr(latest_a, "evaluation_json", None) if latest_a else None
+    ev_json = ej if isinstance(ej, dict) else None
+
     return QuestionDetail(
         id=question.id,
         session_id=question.session_id,
@@ -118,4 +142,6 @@ async def get_question(
         evidence=[EvidenceItem(**e) for e in evidence],
         rubric_bullets=bullets,
         created_at=question.created_at.isoformat() if question.created_at else "",
+        last_answer_id=latest_a.id if latest_a else None,
+        evaluation_json=ev_json,
     )

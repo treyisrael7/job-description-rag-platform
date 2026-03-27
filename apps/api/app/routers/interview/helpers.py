@@ -1,6 +1,8 @@
 """Shared parsing helpers for interview rubrics and API output."""
 
-from app.models import InterviewQuestion
+import uuid
+
+from app.models import InterviewAnswer, InterviewQuestion
 from app.routers.interview.schemas import EvidenceItem, InterviewQuestionOutput, RoleProfileOut
 
 
@@ -60,8 +62,17 @@ def norm_question_type_for_api(t: str) -> str:
     return t
 
 
-def question_to_output(q: InterviewQuestion) -> InterviewQuestionOutput:
+def question_to_output(
+    q: InterviewQuestion,
+    latest_answer: InterviewAnswer | None = None,
+) -> InterviewQuestionOutput:
     bullets, evidence, key_topics, focus_area, _, comp_id, comp_label, _ = from_rubric(q.rubric_json)
+    last_id: uuid.UUID | None = None
+    ev_json: dict | None = None
+    if latest_answer is not None:
+        last_id = latest_answer.id
+        ej = getattr(latest_answer, "evaluation_json", None)
+        ev_json = ej if isinstance(ej, dict) else None
     return InterviewQuestionOutput(
         id=q.id,
         type=norm_question_type_for_api(q.type),
@@ -72,4 +83,6 @@ def question_to_output(q: InterviewQuestion) -> InterviewQuestionOutput:
         key_topics=key_topics,
         evidence=[EvidenceItem(**e) for e in evidence],
         rubric_bullets=bullets,
+        last_answer_id=last_id,
+        evaluation_json=ev_json,
     )

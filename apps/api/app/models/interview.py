@@ -86,9 +86,17 @@ class InterviewAnswer(Base):
     answer_text: Mapped[str] = mapped_column(nullable=False)
     score: Mapped[float] = mapped_column(nullable=False)
     feedback_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSON arrays: structured items {text, evidence} and {text, expected} from evaluate_answer
     strengths: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     weaknesses: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # Full evaluation payload: score, strengths, gaps, citations, score_breakdown, evidence_used, etc.
     feedback_json: Mapped[dict] = mapped_column(JSONB(), nullable=False)
+    # Canonical snapshot: score (LLM 0–10), strengths, gaps, citations (matches evaluate_answer output core)
+    evaluation_json: Mapped[dict] = mapped_column(
+        JSONB(),
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         server_default=text("now()"),
         nullable=False,

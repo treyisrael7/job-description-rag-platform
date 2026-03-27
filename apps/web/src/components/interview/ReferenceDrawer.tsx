@@ -300,7 +300,28 @@ export function ReferenceDrawer({
                       </ul>
                     </section>
                   )}
-                  {!hasCitedEvidence && !hasFlatEvidence && (
+                  {lastEval?.citations && lastEval.citations.length > 0 && (
+                    <section>
+                      <h3 className="mb-2 text-sm font-semibold text-zenodrift-text-strong">
+                        Cited sources
+                      </h3>
+                      <ul className="space-y-3">
+                        {lastEval.citations.map((c, i) => (
+                          <li
+                            key={`${c.chunk_id}-${i}`}
+                            className="rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2.5 text-sm"
+                          >
+                            <span className="font-mono text-xs text-zenodrift-accent">
+                              Page {c.page_number}
+                            </span>
+                            <p className="mt-1 text-zenodrift-text leading-relaxed">{c.text}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+
+                  {!hasCitedEvidence && !hasFlatEvidence && !lastEval?.citations?.length && (
                     <p className="text-sm text-zenodrift-text-muted">
                       Submit an answer to see evidence cited in the evaluation.
                     </p>

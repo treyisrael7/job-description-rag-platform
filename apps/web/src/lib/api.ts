@@ -335,6 +335,18 @@ export async function ask(
 
 // --- Interview Prep API ---
 
+/** Stored evaluation snapshot from interview_answers.evaluation_json (score, strengths, gaps, citations). */
+export type InterviewEvaluationJson = Record<string, unknown> & {
+  score?: number;
+  summary?: string;
+  /** Why this score vs rubric (strengths/gaps). */
+  score_reasoning?: string;
+  strengths?: unknown[];
+  gaps?: unknown[];
+  citations?: unknown[];
+  improved_answer?: string;
+};
+
 export interface InterviewQuestion {
   id: string;
   type: string;
@@ -345,6 +357,8 @@ export interface InterviewQuestion {
   key_topics: string[];
   evidence: Array<{ chunk_id: string; page_number: number; snippet: string }>;
   rubric_bullets: string[];
+  last_answer_id?: string | null;
+  evaluation_json?: InterviewEvaluationJson | null;
 }
 
 export interface InterviewGenerateResponse {
@@ -373,17 +387,54 @@ export interface CitedItem {
   citations: CitationItem[];
 }
 
+export interface StrengthEvalItem {
+  text: string;
+  /** Quote from the answer supporting this strength. */
+  evidence: string;
+  /** Verbatim phrase from the candidate's answer (for UI emphasis). */
+  highlight?: string;
+  /** Why this strength matters for the role (JD/rubric). */
+  impact?: string;
+}
+
+export interface GapEvalItem {
+  text: string;
+  /** What is absent or weak vs rubric/JD (omitted on older stored evaluations). */
+  missing?: string;
+  expected: string;
+  /** How the answer does or does not match the job requirement. */
+  jd_alignment?: string;
+  /** Concrete phrasing the candidate should say instead. */
+  improvement?: string;
+}
+
+export interface EvaluationCitation {
+  chunk_id: string;
+  page_number: number;
+  text: string;
+}
+
 export interface InterviewEvaluateResponse {
   answer_id: string;
+  /** Rubric aggregate (0–100). */
   score: number;
-  strengths: string[];
-  gaps: string[];
+  /** Model-reported score (0–10). */
+  llm_score: number;
+  /** Short explanation of why the score was given. */
+  summary: string;
+  /** 1–2 sentences tying the score to rubric expectations via strengths and gaps. */
+  score_reasoning: string;
+  strengths: StrengthEvalItem[];
+  gaps: GapEvalItem[];
+  citations: EvaluationCitation[];
   strengths_cited?: CitedItem[];
   gaps_cited?: CitedItem[];
+  /** Full rewrite targeting 9–10/10: same idea, more depth, tools/metrics when relevant. */
   improved_answer: string;
   follow_up_questions: string[];
   suggested_followup?: string | null;
   evidence_used: EvidenceUsedItem[];
+  evaluation_json: InterviewEvaluationJson;
 }
 
 export interface InterviewSessionSummary {

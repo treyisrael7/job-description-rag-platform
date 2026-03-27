@@ -1,6 +1,7 @@
 """Pydantic models and constants for interview API."""
 
 import uuid
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -37,6 +38,8 @@ class InterviewQuestionOutput(BaseModel):
     key_topics: list[str] = []
     evidence: list[EvidenceItem]
     rubric_bullets: list[str]
+    last_answer_id: uuid.UUID | None = None
+    evaluation_json: dict[str, Any] | None = None
 
 
 class InterviewGenerateOutput(BaseModel):
@@ -71,6 +74,30 @@ class CitedItem(BaseModel):
     citations: list[CitationItem] = []
 
 
+class StrengthEvalItem(BaseModel):
+    text: str
+    evidence: str = Field("", description="Direct quote from the candidate's answer supporting this strength.")
+    highlight: str = Field("", description="Verbatim phrase from the candidate's answer (for UI emphasis).")
+    impact: str = Field("", description="Why this strength is valuable for the role (tie to JD/rubric/competency).")
+
+
+class GapEvalItem(BaseModel):
+    text: str = Field(..., description="What the candidate said (from their answer).")
+    missing: str = Field("", description="What is absent or weak vs rubric/JD.")
+    expected: str = Field("", description="Relevant JD/rubric requirement (explicitly referenced).")
+    jd_alignment: str = Field(
+        "",
+        description="How the answer does or does not match the job requirement.",
+    )
+    improvement: str = Field("", description="Specific phrasing they should say instead.")
+
+
+class EvaluationCitationOut(BaseModel):
+    chunk_id: str
+    page_number: int = 0
+    text: str = ""
+
+
 class ScoreBreakdownOut(BaseModel):
     relevance_to_context: int
     completeness: int
@@ -81,17 +108,39 @@ class ScoreBreakdownOut(BaseModel):
 
 class InterviewEvaluateOutput(BaseModel):
     answer_id: uuid.UUID
-    score: float
+    score: float = Field(..., description="Rubric aggregate (0–100).")
+    llm_score: float = Field(..., description="Model-reported score on a 0–10 scale.")
+    summary: str = Field(
+        "",
+        description="2–3 sentence model explanation of why the score was given.",
+    )
+    score_reasoning: str = Field(
+        "",
+        description=(
+            "1–2 sentences why this score was given, explicitly tying strengths and gaps to rubric expectations."
+        ),
+    )
     score_breakdown: ScoreBreakdownOut
     feedback_summary: str
-    strengths: list[str]
-    gaps: list[str]
+    strengths: list[StrengthEvalItem]
+    gaps: list[GapEvalItem]
+    citations: list[EvaluationCitationOut] = []
     strengths_cited: list[CitedItem] = []
     gaps_cited: list[CitedItem] = []
-    improved_answer: str
+    improved_answer: str = Field(
+        "",
+        description=(
+            "Rewrite of the candidate’s answer into a stronger version that would score 9–10/10: "
+            "keep the original idea, add depth, tools/metrics when relevant, realistic not generic."
+        ),
+    )
     follow_up_questions: list[str]
     suggested_followup: str | None = None
     evidence_used: list[EvidenceUsedItem]
+    evaluation_json: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Stored snapshot: score, strengths, gaps, citations (and optional extra keys).",
+    )
 
 
 class RoleProfileOut(BaseModel):
@@ -137,6 +186,8 @@ class QuestionDetail(BaseModel):
     evidence: list[EvidenceItem]
     rubric_bullets: list[str]
     created_at: str
+    last_answer_id: uuid.UUID | None = None
+    evaluation_json: dict[str, Any] | None = None
 
 
 class ScoreTrendPoint(BaseModel):
