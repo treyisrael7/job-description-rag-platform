@@ -1,7 +1,7 @@
 """Pydantic models and constants for interview API."""
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -51,6 +51,10 @@ class InterviewEvaluateInput(BaseModel):
     document_id: uuid.UUID
     question_id: uuid.UUID
     answer_text: str = Field(..., min_length=1)
+    mode: Literal["lite", "full"] = Field(
+        "full",
+        description='lite: score + short feedback only. full: strengths, gaps, improved answer, citations.',
+    )
 
 
 class EvidenceUsedItem(BaseModel):
@@ -106,8 +110,40 @@ class ScoreBreakdownOut(BaseModel):
     overall: int
 
 
+class RubricScoreItem(BaseModel):
+    """Per JD dimension: score on 0–10 and reasoning that explains that score."""
+
+    name: str
+    score: float = Field(..., ge=0.0, le=10.0, description="Dimension score on a 0–10 scale.")
+    reasoning: str = Field(
+        ...,
+        min_length=1,
+        description="Explains why this score was assigned for this dimension (answer + role fit).",
+    )
+
+
+class EvaluationUsageOut(BaseModel):
+    """Monthly evaluation usage after this request (UTC month)."""
+
+    plan: str = Field(..., description="User plan key (free, pro, enterprise).")
+    evaluations_used_this_month: int = Field(
+        ...,
+        ge=0,
+        description="Count including the evaluation just completed.",
+    )
+    evaluation_limit: int = Field(
+        ...,
+        ge=0,
+        description="Maximum evaluations allowed this month for this plan.",
+    )
+
+
 class InterviewEvaluateOutput(BaseModel):
     answer_id: uuid.UUID
+    evaluation_mode: Literal["lite", "full"] = Field(
+        "full",
+        description="lite: compact scoring; full: explainable evaluation with strengths/gaps.",
+    )
     score: float = Field(..., description="Rubric aggregate (0–100).")
     llm_score: float = Field(..., description="Model-reported score on a 0–10 scale.")
     summary: str = Field(
@@ -137,9 +173,17 @@ class InterviewEvaluateOutput(BaseModel):
     follow_up_questions: list[str]
     suggested_followup: str | None = None
     evidence_used: list[EvidenceUsedItem]
+    rubric_scores: list[RubricScoreItem] = Field(
+        default_factory=list,
+        description="Per-dimension scores (0–10) with reasoning; aligns with document rubric when present.",
+    )
     evaluation_json: dict[str, Any] = Field(
         default_factory=dict,
-        description="Stored snapshot: score, strengths, gaps, citations (and optional extra keys).",
+        description="Stored snapshot: score, strengths, gaps, citations, rubric_scores, and optional extra keys.",
+    )
+    usage: EvaluationUsageOut = Field(
+        ...,
+        description="Plan and monthly evaluation quota usage (after this call).",
     )
 
 
@@ -149,6 +193,11 @@ class RoleProfileOut(BaseModel):
     roleTitleGuess: str = ""
     focusAreas: list[str] = []
     questionMix: dict = {}
+
+
+class RubricDimensionOut(BaseModel):
+    name: str
+    description: str = ""
 
 
 class SessionSummary(BaseModel):
@@ -172,6 +221,7 @@ class SessionDetail(BaseModel):
     role_profile: RoleProfileOut | None = None
     performance_profile: dict | None = None
     adaptive_focus_label: str | None = None
+    rubric_json: list[RubricDimensionOut] | None = None
 
 
 class QuestionDetail(BaseModel):

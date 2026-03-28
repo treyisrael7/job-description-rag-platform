@@ -1,5 +1,6 @@
 """Document ingestion: PDF extraction, chunking, embeddings."""
 
+import asyncio
 import logging
 import uuid
 
@@ -262,6 +263,36 @@ async def run_ingestion(document_id: uuid.UUID) -> None:
                         exc_info=True,
                     )
                     # Do not fail ingestion; competencies can be re-run later
+
+                try:
+                    from app.services.rubric_extractor import extract_rubric_from_jd
+
+                    rubric = await asyncio.to_thread(extract_rubric_from_jd, norm_text)
+                    if rubric:
+                        result = await db.execute(
+                            select(Document).where(Document.id == document_id)
+                        )
+                        doc_for_rubric = result.scalar_one_or_none()
+                        if doc_for_rubric:
+                            doc_for_rubric.rubric_json = rubric
+                            await db.commit()
+                            logger.info(
+                                "Rubric extraction: stored %s dimensions document_id=%s",
+                                len(rubric),
+                                document_id,
+                            )
+                    else:
+                        logger.info(
+                            "Rubric extraction: empty or skipped document_id=%s",
+                            document_id,
+                        )
+                except Exception as rubric_err:
+                    logger.warning(
+                        "Rubric extraction failed (non-fatal): %s document_id=%s",
+                        rubric_err,
+                        document_id,
+                        exc_info=True,
+                    )
 
         except Exception as e:
             await db.rollback()

@@ -10,8 +10,14 @@ export function useEvaluateAnswerMutation(
 ) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (args: { questionId: string; answerText: string }) =>
-      evaluateAnswer(documentId, args.questionId, args.answerText),
+    mutationFn: (args: {
+      questionId: string;
+      answerText: string;
+      mode?: "lite" | "full";
+    }) =>
+      evaluateAnswer(documentId, args.questionId, args.answerText, {
+        mode: args.mode,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.document(documentId) });
       qc.invalidateQueries({ queryKey: queryKeys.documents() });

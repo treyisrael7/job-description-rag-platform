@@ -240,6 +240,50 @@ def score_jd_alignment(
     return int(round(min(100.0, max(0.0, raw))))
 
 
+def score_from_rubric_dimension_mean(
+    rubric_scores: list[dict[str, Any]],
+) -> tuple[float, dict[str, Any]] | tuple[None, None]:
+    """
+    Derive overall scoring from the unweighted arithmetic mean of per-dimension scores.
+
+    Each rubric dimension is treated equally (no domain-specific or hand-tuned weights).
+    Dimension scores are expected on a 0–10 scale; overall is mapped to 0–100 for storage/API.
+
+    Returns:
+        (mean_0_10, breakdown) where breakdown uses the same 0–100 value for all legacy
+        dimension slots so ``overall`` matches the mean × 10; or (None, None) if unusable.
+    """
+    if not rubric_scores:
+        return None, None
+    vals: list[float] = []
+    for x in rubric_scores:
+        if not isinstance(x, dict):
+            continue
+        if not str(x.get("name", "")).strip():
+            continue
+        try:
+            s = float(x.get("score", 0))
+        except (TypeError, ValueError):
+            continue
+        vals.append(max(0.0, min(10.0, s)))
+    if not vals:
+        return None, None
+    mean_0_10 = sum(vals) / len(vals)
+    overall_0_100 = int(round(mean_0_10 * 10.0))
+    overall_0_100 = max(0, min(100, overall_0_100))
+    breakdown: dict[str, Any] = {
+        # Single aggregate from rubric mean; legacy four slots mirror it (no weighted blend).
+        "relevance_to_context": overall_0_100,
+        "completeness": overall_0_100,
+        "clarity": overall_0_100,
+        "jd_alignment": overall_0_100,
+        "overall": overall_0_100,
+        "aggregation": "rubric_dimension_mean",
+        "n_rubric_dimensions": len(vals),
+    }
+    return mean_0_10, breakdown
+
+
 def compute_score_breakdown(
     user_answer: str,
     evidence: list[dict],
@@ -283,6 +327,12 @@ def compute_score_breakdown(
 
 def build_feedback_summary(breakdown: dict[str, Any]) -> str:
     """Short deterministic summary line derived only from numeric breakdown."""
+    if breakdown.get("aggregation") == "rubric_dimension_mean":
+        o = int(breakdown.get("overall", 0))
+        n = int(breakdown.get("n_rubric_dimensions", 0))
+        return (
+            f"Overall score {o}/100 (mean of {n} rubric dimension scores, each 0–10; dimensions weighted equally)."
+        )
     r = breakdown.get("relevance_to_context", 0)
     c = breakdown.get("completeness", 0)
     cl = breakdown.get("clarity", 0)

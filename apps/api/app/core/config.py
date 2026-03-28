@@ -68,13 +68,36 @@ class Settings(BaseSettings):
     openai_embedding_model: str = "text-embedding-3-small"  # OPENAI_EMBEDDING_MODEL
     openai_embedding_dim: int = 1536  # OPENAI_EMBEDDING_DIM (must match DB vector column)
 
-    # OpenAI chat (Q&A)
+    # OpenAI chat: default / cheaper model (question gen, rubric extraction, Q&A, etc.)
     openai_chat_model: str = "gpt-4o-mini"  # OPENAI_CHAT_MODEL
+
+    # Final answer evaluation: use higher-quality model only when enabled
+    use_high_quality_eval: bool = False  # USE_HIGH_QUALITY_EVAL
+    openai_chat_model_eval_high: str = "gpt-4o"  # OPENAI_CHAT_MODEL_EVAL_HIGH
+
+    # LLM cache (Redis optional; falls back to in-process memory)
+    redis_url: str | None = None  # REDIS_URL e.g. redis://localhost:6379/0
+    cache_ttl_retrieval_seconds: int = 86400  # CACHE_TTL_RETRIEVAL_SECONDS (0 = disable retrieval cache)
+    cache_ttl_evaluation_seconds: int = 3600  # CACHE_TTL_EVALUATION_SECONDS (0 = disable eval cache)
+
+    # Interview answer evaluation quotas (per calendar month, UTC). Plan is stored on users.plan.
+    plan_limit_free: int = 30  # PLAN_LIMIT_FREE
+    plan_limit_pro: int = 500  # PLAN_LIMIT_PRO
+    plan_limit_enterprise: int = 100_000  # PLAN_LIMIT_ENTERPRISE
+    # Demo sandbox user (x-demo-key): separate cap so local testing does not hit free tier.
+    demo_monthly_evaluation_limit: int = 5_000  # DEMO_MONTHLY_EVALUATION_LIMIT
 
     @property
     def demo_auth_active(self) -> bool:
         """True when demo header auth is allowed (demo mode on and DEMO_KEY set)."""
         return bool(self.demo_mode_enabled and self.demo_key)
+
+    @property
+    def openai_eval_chat_model(self) -> str:
+        """Chat model for final interview evaluation (see USE_HIGH_QUALITY_EVAL)."""
+        if self.use_high_quality_eval:
+            return self.openai_chat_model_eval_high
+        return self.openai_chat_model
 
     @model_validator(mode="after")
     def _validate_demo_config(self) -> Self:

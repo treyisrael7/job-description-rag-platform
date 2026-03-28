@@ -335,8 +335,16 @@ export async function ask(
 
 // --- Interview Prep API ---
 
+/** Per JD dimension: 0–10 score and why that score was assigned. */
+export interface RubricScoreItem {
+  name: string;
+  score: number;
+  reasoning: string;
+}
+
 /** Stored evaluation snapshot from interview_answers.evaluation_json (score, strengths, gaps, citations). */
 export type InterviewEvaluationJson = Record<string, unknown> & {
+  evaluation_mode?: "lite" | "full";
   score?: number;
   summary?: string;
   /** Why this score vs rubric (strengths/gaps). */
@@ -345,6 +353,8 @@ export type InterviewEvaluationJson = Record<string, unknown> & {
   gaps?: unknown[];
   citations?: unknown[];
   improved_answer?: string;
+  /** Per-dimension scores (0–10) with reasoning when JD rubric dimensions exist. */
+  rubric_scores?: RubricScoreItem[];
 };
 
 export interface InterviewQuestion {
@@ -414,8 +424,18 @@ export interface EvaluationCitation {
   text: string;
 }
 
+/** Monthly evaluation quota (UTC) after this evaluate call. */
+export interface EvaluationUsage {
+  plan: string;
+  evaluations_used_this_month: number;
+  evaluation_limit: number;
+}
+
 export interface InterviewEvaluateResponse {
   answer_id: string;
+  /** lite: score + short feedback; full: strengths, gaps, improved answer, etc. */
+  evaluation_mode: "lite" | "full";
+  usage: EvaluationUsage;
   /** Rubric aggregate (0–100). */
   score: number;
   /** Model-reported score (0–10). */
@@ -434,6 +454,8 @@ export interface InterviewEvaluateResponse {
   follow_up_questions: string[];
   suggested_followup?: string | null;
   evidence_used: EvidenceUsedItem[];
+  /** Per-dimension scores (0–10); reasoning explains each score. */
+  rubric_scores: RubricScoreItem[];
   evaluation_json: InterviewEvaluationJson;
 }
 
@@ -460,6 +482,8 @@ export interface InterviewSessionDetail {
   performance_profile?: Record<string, number> | null;
   /** Human-readable focus derived from performance_profile (server-computed). */
   adaptive_focus_label?: string | null;
+  /** JD evaluation dimensions from document ingestion (job_description docs). */
+  rubric_json?: { name: string; description: string }[] | null;
 }
 
 export interface InterviewGenerateOverrides {
@@ -501,16 +525,21 @@ export async function generateInterview(
 export async function evaluateAnswer(
   documentId: string,
   questionId: string,
-  answerText: string
+  answerText: string,
+  options?: { mode?: "lite" | "full" }
 ): Promise<InterviewEvaluateResponse> {
+  const body: Record<string, unknown> = {
+    document_id: documentId,
+    question_id: questionId,
+    answer_text: answerText,
+  };
+  if (options?.mode) {
+    body.mode = options.mode;
+  }
   const res = await fetch(`${API_BASE}/interview/evaluate`, {
     method: "POST",
     headers: await getAuthHeaders(),
-    body: JSON.stringify({
-      document_id: documentId,
-      question_id: questionId,
-      answer_text: answerText,
-    }),
+    body: JSON.stringify(body),
   });
   return handleResponse<InterviewEvaluateResponse>(res);
 }

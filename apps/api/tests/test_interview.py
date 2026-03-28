@@ -333,13 +333,34 @@ async def test_interview_evaluate_question_not_found(client, demo_key_off, monke
     assert resp.status_code == 404
 
 
+@pytest.mark.parametrize("mode,expect_detail", [("full", True), ("lite", False)])
 @pytest.mark.asyncio
-async def test_interview_evaluate_success(client, demo_key_off, monkeypatch, force_auth):
-    """Evaluate returns score, strengths, gaps, improved_answer, follow_up_questions, citations."""
+async def test_interview_evaluate_success(
+    client, demo_key_off, monkeypatch, force_auth, mode, expect_detail
+):
+    """Evaluate returns score; full mode includes strengths, gaps, citations; lite is compact."""
     from app.db.base import async_session_maker
     from app.models import Document, InterviewQuestion, InterviewSession, User
 
     async def _mock_evaluate(*args, **kwargs):
+        em = str(kwargs.get("evaluation_mode") or "full").lower()
+        if em == "lite":
+            return {
+                "score": 7.0,
+                "summary": "Solid Python; add AWS per JD.",
+                "score_reasoning": "Brief: Python yes, AWS missing.",
+                "strengths": [],
+                "gaps": [],
+                "citations": [],
+                "strengths_cited": [],
+                "gaps_cited": [],
+                "improved_answer": "",
+                "follow_up_questions": [],
+                "evidence_used": [],
+                "evidence_for_scoring": [
+                    {"snippet": "Python, AWS, scalability, collaboration, concrete examples"},
+                ],
+            }
         return {
             "score": 7.0,
             "summary": "The answer shows solid Python experience but lacks AWS detail required by the JD.",
@@ -441,15 +462,23 @@ async def test_interview_evaluate_success(client, demo_key_off, monkeypatch, for
             "document_id": str(doc_id),
             "question_id": str(question_id),
             "answer_text": "I have 5 years of Python experience.",
+            "mode": mode,
         },
     )
     assert resp.status_code == 200
     data = resp.json()
+    assert data["usage"]["plan"] == "free"
+    assert data["usage"]["evaluations_used_this_month"] >= 1
+    assert data["usage"]["evaluation_limit"] >= 1
+    assert data["evaluation_mode"] == mode
     assert "answer_id" in data
     assert data.get("summary")
     assert 0 <= data["score"] <= 100
     assert 0 <= data["llm_score"] <= 10
-    assert data["citations"] and data["citations"][0]["chunk_id"] == "aa"
+    if expect_detail:
+        assert data["citations"] and data["citations"][0]["chunk_id"] == "aa"
+    else:
+        assert data["citations"] == []
     assert "score_breakdown" in data
     for k in ("relevance_to_context", "completeness", "clarity", "jd_alignment", "overall"):
         assert k in data["score_breakdown"]
@@ -465,9 +494,15 @@ async def test_interview_evaluate_success(client, demo_key_off, monkeypatch, for
     assert "improved_answer" in data
     assert "follow_up_questions" in data
     assert "evidence_used" in data
-    assert len(data["evidence_used"]) == 1
-    assert data["evidence_used"][0]["sourceId"] == "aa"
-    assert data["evidence_used"][0]["quote"]
+    if expect_detail:
+        assert len(data["evidence_used"]) == 1
+        assert data["evidence_used"][0]["sourceId"] == "aa"
+        assert data["evidence_used"][0]["quote"]
+    else:
+        assert data["evidence_used"] == []
+        assert not (data.get("improved_answer") or "").strip()
+        assert data["strengths"] == []
+        assert data["gaps"] == []
 
     async with async_session_maker() as db:
         from sqlalchemy import select

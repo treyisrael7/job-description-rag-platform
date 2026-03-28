@@ -20,16 +20,24 @@ from app.routers.interview.schemas import (
     EvaluationCitationOut,
     EvidenceUsedItem,
     GapEvalItem,
+    EvaluationUsageOut,
     InterviewEvaluateInput,
     InterviewEvaluateOutput,
     InterviewGenerateInput,
     InterviewGenerateOutput,
     QUESTION_MIX_PRESETS,
+    RubricScoreItem,
     ScoreBreakdownOut,
     StrengthEvalItem,
 )
+from app.services.evaluation_usage import consume_evaluation_quota
+from app.services.interview import normalize_rubric_scores_output
 from app.services.performance_profile import compute_performance_profile, profile_answer_from_feedback
-from app.services.interview_scoring import build_feedback_summary, compute_score_breakdown
+from app.services.interview_scoring import (
+    build_feedback_summary,
+    compute_score_breakdown,
+    score_from_rubric_dimension_mean,
+)
 from app.services.role_intelligence import VALID_DOMAINS, VALID_SENIORITIES
 
 logger = logging.getLogger(__name__)
@@ -199,6 +207,9 @@ async def evaluate(
     question = row[0]
     session = row[1]
     assert_resource_ownership(session, current_user)
+
+    used, eval_limit, plan_key = await consume_evaluation_quota(db, current_user.id)
+
     bullets, evidence, _, focus_area, must_mention, comp_id, comp_label, evidence_chunk_ids = from_rubric(question.rubric_json)
     role_profile = to_role_profile_out(getattr(session, "role_profile_json", None))
     rp_dict = (
@@ -228,28 +239,35 @@ async def evaluate(
             role_profile=rp_dict,
             user_answer=body.answer_text,
             evidence=evidence,
+            evaluation_mode=body.mode,
+            session_id=session.id,
         )
     except Exception as e:
         logger.exception("evaluate_answer_with_retrieval failed")
         raise HTTPException(status_code=503, detail=f"Evaluation failed: {str(e)[:200]}")
 
     ev_for_scoring = evaluation.pop("evidence_for_scoring", []) or []
-    score_breakdown = compute_score_breakdown(
-        user_answer=body.answer_text,
-        evidence=ev_for_scoring,
-        what_good_looks_like=bullets,
-        must_mention=must_mention,
-        role_profile=rp_dict,
-        competency_label=comp_label,
-    )
+    rubric_scores_payload = normalize_rubric_scores_output(evaluation.get("rubric_scores"))
+    mean_0_10, rubric_breakdown = score_from_rubric_dimension_mean(rubric_scores_payload)
+    if rubric_breakdown is not None:
+        score_breakdown = rubric_breakdown
+        llm_score = float(mean_0_10)
+    else:
+        score_breakdown = compute_score_breakdown(
+            user_answer=body.answer_text,
+            evidence=ev_for_scoring,
+            what_good_looks_like=bullets,
+            must_mention=must_mention,
+            role_profile=rp_dict,
+            competency_label=comp_label,
+        )
+        llm_score = float(evaluation.get("score") or 0.0)
     feedback_summary = build_feedback_summary(score_breakdown)
     final_score = float(score_breakdown["overall"])
 
     follow_ups = evaluation.get("follow_up_questions") or []
     if evaluation.get("suggested_followup") and not follow_ups:
         follow_ups = [evaluation["suggested_followup"]]
-
-    llm_score = float(evaluation.get("score") or 0.0)
     eval_summary = str(evaluation.get("summary") or "").strip()
     score_reasoning = str(evaluation.get("score_reasoning") or "").strip()
     strengths_raw = list(evaluation.get("strengths") or [])
@@ -300,7 +318,10 @@ async def evaluate(
     strengths_list = _strength_items(strengths_raw)
     gaps_list = _gap_items(gaps_raw)
 
+    rubric_score_models = [RubricScoreItem(**x) for x in rubric_scores_payload]
+
     evaluation_json_payload = {
+        "evaluation_mode": body.mode,
         "score": llm_score,
         "summary": eval_summary,
         "score_reasoning": score_reasoning,
@@ -308,6 +329,7 @@ async def evaluate(
         "gaps": gaps_list,
         "citations": citations_raw,
         "improved_answer": str(evaluation.get("improved_answer") or "").strip(),
+        "rubric_scores": rubric_scores_payload,
     }
 
     feedback_json = {
@@ -319,12 +341,13 @@ async def evaluate(
         "citations": citations_raw,
         "strengths_cited": evaluation.get("strengths_cited", []),
         "gaps_cited": evaluation.get("gaps_cited", []),
-        "improved_answer": evaluation["improved_answer"],
+        "improved_answer": str(evaluation.get("improved_answer") or ""),
         "follow_up_questions": follow_ups,
         "suggested_followup": evaluation.get("suggested_followup"),
-        "evidence_used": evaluation["evidence_used"],
+        "evidence_used": evaluation.get("evidence_used", []),
         "score_breakdown": score_breakdown,
         "llm_score_0_10": llm_score,
+        "rubric_scores": rubric_scores_payload,
     }
 
     answer = InterviewAnswer(
@@ -384,6 +407,12 @@ async def evaluate(
 
     return InterviewEvaluateOutput(
         answer_id=answer.id,
+        evaluation_mode=body.mode,
+        usage=EvaluationUsageOut(
+            plan=plan_key,
+            evaluations_used_this_month=used,
+            evaluation_limit=eval_limit,
+        ),
         score=final_score,
         llm_score=llm_score,
         summary=eval_summary,
@@ -401,9 +430,10 @@ async def evaluate(
         citations=citation_models,
         strengths_cited=[_to_cited(s) for s in strengths_cited if isinstance(s, dict)],
         gaps_cited=[_to_cited(g) for g in gaps_cited if isinstance(g, dict)],
-        improved_answer=evaluation["improved_answer"],
+        improved_answer=str(evaluation.get("improved_answer") or ""),
         follow_up_questions=follow_ups,
         suggested_followup=evaluation.get("suggested_followup"),
         evidence_used=[EvidenceUsedItem(**e) for e in evidence_used],
+        rubric_scores=rubric_score_models,
         evaluation_json=evaluation_json_payload,
     )

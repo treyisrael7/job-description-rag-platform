@@ -1,5 +1,7 @@
 """Interview Prep: evidence retrieval + domain-aware question generation from job descriptions."""
 
+import asyncio
+import copy
 import difflib
 import json
 import logging
@@ -16,6 +18,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.llm_cache import (
+    cache_get_json,
+    cache_set_json,
+    evaluation_cache_key,
+    retrieval_cache_key,
+    session_pool_get,
+    session_pool_set,
+)
 from app.models import Document, InterviewAnswer, InterviewQuestion, InterviewSession, InterviewSource
 from app.services.adaptive_engine import select_next_question_type
 from app.services.jd_sections import normalize_jd_text
@@ -46,6 +56,8 @@ INTERVIEW_EVIDENCE_TOP_K = 18
 COMPETENCY_EVIDENCE_TOP_K = 6
 # Top JD chunks merged into evaluation context (after rubric/auxiliary evidence).
 EVALUATION_QUERY_TOP_K = 12
+# Broad JD pool per interview session; per-question picks top_k via lexical re-rank (no extra vector query).
+SESSION_JD_POOL_TOP_K = 32
 VALID_QUESTION_TYPES = frozenset({"behavioral", "role_specific", "scenario"})
 USER_RESUME_DOC_DOMAIN = "user_resume"
 
@@ -198,6 +210,89 @@ def _retrieval_dict_to_evidence_item(c: dict) -> dict:
         "keyword_score": c.get("keyword_score"),
         "final_score": c.get("final_score"),
     }
+
+
+def _session_pool_query_text(role_profile: dict | None) -> str:
+    """Stable, broad query for one vector retrieval per session (JD pool)."""
+    rp = role_profile or {}
+    focus = rp.get("focusAreas") or []
+    parts = [
+        " ".join(str(x) for x in focus if x),
+        str(rp.get("domain") or ""),
+        str(rp.get("seniority") or ""),
+        "job responsibilities qualifications requirements skills experience role",
+    ]
+    return " ".join(p.strip() for p in parts if p and str(p).strip()).strip() or (
+        "job description responsibilities qualifications requirements"
+    )
+
+
+def _token_overlap_score(query: str, doc_text: str) -> float:
+    qt = set(re.findall(r"[a-zA-Z0-9]+", (query or "").lower()))
+    ct = set(re.findall(r"[a-zA-Z0-9]+", (doc_text or "").lower()))
+    if not qt or not ct:
+        return 0.0
+    inter = len(qt & ct)
+    union = len(qt | ct) or 1
+    return inter / union
+
+
+def _rank_pool_for_query(pool: list[dict], query_text: str, top_k: int) -> list[dict]:
+    """
+    Pick top_k chunks from a session pool by lexical overlap with query_text, blended with
+    retrieval final_score from the pool build (no extra vector DB query).
+    """
+    if not pool or top_k <= 0:
+        return []
+    scored: list[tuple[float, int, dict]] = []
+    for i, item in enumerate(pool):
+        if not isinstance(item, dict):
+            continue
+        text = (item.get("text") or item.get("snippet") or "").strip()
+        lex = _token_overlap_score(query_text, text)
+        fs = item.get("final_score")
+        try:
+            fs_f = float(fs) if fs is not None else 0.0
+        except (TypeError, ValueError):
+            fs_f = 0.0
+        fs_f = max(0.0, min(1.0, fs_f))
+        combined = 0.62 * lex + 0.38 * fs_f
+        scored.append((combined, -i, item))
+    scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    return [dict(t[2]) for t in scored[:top_k]]
+
+
+async def _get_or_create_session_jd_pool(
+    db: AsyncSession,
+    document_id: uuid.UUID,
+    session_id: uuid.UUID,
+    role_profile: dict | None,
+) -> list[dict]:
+    """
+    Cached top-K JD chunks for the session (one embed + retrieve per session until TTL expires).
+    """
+    cached = await asyncio.to_thread(session_pool_get, session_id)
+    if isinstance(cached, list) and cached:
+        return cached
+
+    query_text = _session_pool_query_text(role_profile)
+    query_embedding = embed_query(query_text)
+    top_k = min(SESSION_JD_POOL_TOP_K, settings.top_k_max * 4)
+    chunks = await retrieve_chunks(
+        db=db,
+        document_id=document_id,
+        query_embedding=query_embedding,
+        query_text=query_text,
+        top_k=top_k,
+        include_low_signal=False,
+        section_types=None,
+        doc_domain="job_description",
+        source_types=["jd"],
+    )
+    result = [_retrieval_dict_to_evidence_item(c) for c in chunks]
+    if result:
+        await asyncio.to_thread(session_pool_set, session_id, result)
+    return result
 
 
 def _normalize_evaluation_chunk(e: dict) -> dict:
@@ -390,6 +485,7 @@ Output JSON only."""
     try:
         from openai import OpenAI
 
+        # Single-question generation: OPENAI_CHAT_MODEL only (cheap path).
         client = OpenAI(api_key=settings.openai_api_key)
         response = client.chat.completions.create(
             model=settings.openai_chat_model,
@@ -697,6 +793,7 @@ def generate_interview_questions(
     rp = role_profile or DEFAULT_ROLE_PROFILE.copy()
     system_prompt, user_content = _build_domain_aware_prompt(rp, retrieved_evidence_chunks, num_questions)
 
+    # Batch question generation uses OPENAI_CHAT_MODEL only (not OPENAI_CHAT_MODEL_EVAL_HIGH).
     client = OpenAI(api_key=settings.openai_api_key)
     response = client.chat.completions.create(
         model=settings.openai_chat_model,
@@ -728,7 +825,7 @@ EVALUATION_SYSTEM_PROMPT = """You are an expert interview evaluator.
 Evaluate the candidate's answer using the provided job description context.
 
 You MUST:
-1. Score the answer (0–10)
+1. Score the answer (0–10). If the user message includes role-specific dimensions (below), the top-level `score` must be the **unweighted arithmetic mean** of every `rubric_scores[].score` you output (same number as averaging those dimension scores yourself—no separate holistic guess).
 2. Write a concise summary (2–3 sentences) explaining why that score was given, grounded in the rubric and answer
 3. Write score_reasoning: 1–2 sentences explaining why this score was given, explicitly tying strengths and gaps to rubric expectations
 4. Identify strengths. For each strength you MUST include:
@@ -744,6 +841,7 @@ You MUST:
    - improvement: specific phrasing they should say instead (concrete example sentences)
 6. Write improved_answer: rewrite the candidate’s entire answer into a stronger version that would score 9–10/10 on this question
 7. Provide citations from the job description chunks
+8. Include rubric_scores: when the user message lists role-specific dimensions (JSON), fill `rubric_scores` with one object per dimension: `name` (exact match), `score` (0–10), `reasoning` (why that score). If there are no such dimensions, use `[]`. The top-level `score` (step 1) must match the mean of those per-dimension scores when any are present.
 
 Rules:
 - ONLY use provided context (no hallucination)
@@ -754,6 +852,7 @@ Rules:
 - In every gap, explicitly reference the relevant JD expectation and explain the mismatch (or gap) vs that expectation; jd_alignment must summarize alignment vs the job requirement
 - improved_answer must be a full rewritten answer (not bullet notes): keep the candidate’s original idea and story arc; add missing depth the gaps called out; add concrete tools, technologies, and metrics when relevant to the role/JD; stay realistic and specific to their situation—no generic filler or buzzwords without substance
 - For "citations", use only chunk_id values that appear in the provided chunks; quote or paraphrase chunk text faithfully; page_number must match the chunk
+- For each rubric_scores[] entry: score must be between 0 and 10 (float); reasoning must justify that score (not generic praise—tie to the candidate's answer and the dimension)
 
 Return JSON in this exact format (no markdown fences, JSON only):
 {
@@ -780,8 +879,86 @@ Return JSON in this exact format (no markdown fences, JSON only):
   "citations": [
     { "chunk_id": "...", "page_number": 0, "text": "..." }
   ],
-  "improved_answer": "Full rewritten answer that would score 9–10/10: same core idea, added depth, tools/metrics where relevant, realistic and specific."
+  "improved_answer": "Full rewritten answer that would score 9–10/10: same core idea, added depth, tools/metrics where relevant, realistic and specific.",
+  "rubric_scores": [
+    {
+      "name": "dimension name (must match document dimensions when provided)",
+      "score": 0.0,
+      "reasoning": "Why this dimension received this score (0–10): cite what the answer showed or missed for this dimension."
+    }
+  ]
 }"""
+
+
+EVALUATION_SYSTEM_PROMPT_LITE = """You are an expert interview evaluator in LITE mode.
+
+Output valid JSON only (no markdown). Be brief. No deep reasoning, no multi-paragraph analysis, no structured strengths/gaps lists.
+
+You MUST:
+1. score (0–10). If the user message includes role-specific dimensions, the top-level score must equal the unweighted mean of every rubric_scores[].score you output.
+2. summary: at most 2 short sentences — high-level feedback only (why this score band).
+3. score_reasoning: at most ONE short sentence — no lists, no step-by-step logic, no mention of "strengths" or "gaps" as sections.
+4. rubric_scores: If "Document evaluation dimensions" lists dimensions, include one object per dimension: name (exact match), score (0–10), reasoning (one short phrase only, ≤25 words). If no dimensions, use [].
+5. strengths: MUST be the empty array [].
+6. gaps: MUST be the empty array [].
+7. citations: MUST be the empty array [].
+8. improved_answer: MUST be the empty string "".
+
+Rules:
+- Do NOT write strengths, gaps, citations, or improved_answer content — keep those fields empty as specified.
+- Do NOT produce long reasoning; keep summary and score_reasoning short.
+- For rubric_scores reasoning fields, one short phrase per dimension only.
+
+Return JSON in this exact shape:
+{
+  "score": 0.0,
+  "summary": "At most two short sentences.",
+  "score_reasoning": "One short sentence max.",
+  "strengths": [],
+  "gaps": [],
+  "citations": [],
+  "improved_answer": "",
+  "rubric_scores": []
+}"""
+
+
+def _evaluation_system_prompt_for_mode(evaluation_mode: str) -> str:
+    m = (evaluation_mode or "full").strip().lower()
+    if m == "lite":
+        return EVALUATION_SYSTEM_PROMPT_LITE
+    return EVALUATION_SYSTEM_PROMPT
+
+
+def _format_document_rubric_block(document_rubric_json: list[dict] | None) -> str:
+    """Human- and model-readable block for JD-level evaluation dimensions (name + description)."""
+    if not document_rubric_json:
+        return ""
+    payload: list[dict[str, str]] = []
+    for d in document_rubric_json:
+        if not isinstance(d, dict):
+            continue
+        name = str(d.get("name", "")).strip()
+        if not name:
+            continue
+        payload.append(
+            {
+                "name": name,
+                "description": str(d.get("description", "")).strip(),
+            }
+        )
+    if not payload:
+        return ""
+    rubric_json = json.dumps(payload, ensure_ascii=False, indent=2)
+    return (
+        "## Role-specific dimensions\n\n"
+        "You must evaluate the candidate based on the following role-specific dimensions:\n\n"
+        f"{rubric_json}\n\n"
+        "For each dimension:\n"
+        "- assign a score (0–10)\n"
+        "- explain reasoning\n\n"
+        "Then compute an overall score based on these dimensions "
+        "(the JSON field `score` must equal the unweighted mean of those per-dimension scores).\n\n"
+    )
 
 
 def _build_domain_aware_evaluation_prompt(
@@ -794,8 +971,10 @@ def _build_domain_aware_evaluation_prompt(
     evidence: list[dict],
     role_profile: dict,
     answer_text: str,
+    document_rubric_json: list[dict] | None = None,
+    evaluation_mode: str = "full",
 ) -> tuple[str, str]:
-    """Build prompts: fixed expert-evaluator system message + user message with Q, rubric, chunks, answer."""
+    """Build prompts: system message (full vs lite) + user message with Q, rubric, chunks, answer."""
     rubric_lines = [f"• {b}" for b in (what_good_looks_like or []) if str(b).strip()]
     if must_mention:
         rubric_lines.append("Must mention: " + "; ".join(must_mention))
@@ -835,10 +1014,12 @@ def _build_domain_aware_evaluation_prompt(
 
 """
 
+    doc_rubric_block = _format_document_rubric_block(document_rubric_json)
+
     user_content = f"""{header}## Interview question
 {question}
 
-## Rubric and expected skills (from role / question setup)
+{doc_rubric_block}## Rubric and expected skills (from role / question setup)
 {rubric_text}
 
 ## Retrieved job description chunks (only valid sources for "citations"; cite these chunk_id values exactly)
@@ -848,7 +1029,7 @@ def _build_domain_aware_evaluation_prompt(
 {answer_text}
 """
 
-    return EVALUATION_SYSTEM_PROMPT, user_content
+    return _evaluation_system_prompt_for_mode(evaluation_mode), user_content
 
 
 def _citation_from_evidence(e: dict) -> dict:
@@ -990,8 +1171,43 @@ def _fallback_evaluation_parse(evidence: list[dict]) -> dict:
         "suggested_followup": None,
         "evidence_used": [],
         "score_reasoning": "",
+        "rubric_scores": [],
         "_llm_citation_entries": 0,
     }
+
+
+def _normalize_rubric_scores_list(raw: list | None) -> list[dict[str, float | str]]:
+    """
+    Canonical rubric_scores: name (str), score (float 0–10 per dimension), reasoning (explains that score).
+
+    Empty or missing reasoning is replaced so downstream consumers always get an explanatory string.
+    """
+    out: list[dict[str, float | str]] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        if not name:
+            continue
+        rs = item.get("score")
+        try:
+            score_f = max(0.0, min(10.0, float(rs)))
+        except (TypeError, ValueError):
+            score_f = 0.0
+        reasoning = str(item.get("reasoning", "")).strip()
+        if not reasoning:
+            reasoning = (
+                f"Assigned {score_f:.1f}/10 for this dimension: the answer's fit to «{name}» "
+                "given the question, rubric, and job description context."
+            )
+        out.append({"name": name, "score": score_f, "reasoning": reasoning})
+    return out
+
+
+# Public alias for routers/tests that need the same canonical shape.
+normalize_rubric_scores_output = _normalize_rubric_scores_list
 
 
 def _dedupe_citations(rows: list[dict]) -> list[dict]:
@@ -1218,6 +1434,8 @@ def _parse_evaluation_response(raw: str, evidence: list[dict]) -> dict:
     summary = str(data.get("summary") or "").strip()
     score_reasoning = str(data.get("score_reasoning") or "").strip()
 
+    rubric_scores = _normalize_rubric_scores_list(data.get("rubric_scores"))
+
     raw_cit_list = data.get("citations")
     llm_citation_entries = len(
         [x for x in (raw_cit_list if isinstance(raw_cit_list, list) else []) if isinstance(x, dict)]
@@ -1236,6 +1454,7 @@ def _parse_evaluation_response(raw: str, evidence: list[dict]) -> dict:
         "follow_up_questions": follow_up,
         "suggested_followup": str(sug).strip() if sug else None,
         "evidence_used": evidence_used,
+        "rubric_scores": rubric_scores,
         "_llm_citation_entries": llm_citation_entries,
     }
 
@@ -1388,12 +1607,28 @@ def _filter_citation_dict(cit: dict, allowed: set[str]) -> bool:
     return ck in allowed
 
 
-def validate_evaluation_output(response: dict, retrieved_chunks: list[dict]) -> dict:
+def validate_evaluation_output(
+    response: dict,
+    retrieved_chunks: list[dict],
+    evaluation_mode: str = "full",
+) -> dict:
     """
     Post-LLM validation: drop citations whose chunk_id is not in retrieved chunks;
-    rebuild evidence_used; prune invalid nested citations; ensure non-empty strengths/gaps.
+    rebuild evidence_used; prune invalid nested citations; ensure non-empty strengths/gaps (full only).
     """
     out = dict(response)
+    mode = (evaluation_mode or "full").strip().lower()
+    if mode == "lite":
+        out["citations"] = []
+        out["evidence_used"] = []
+        out["improved_answer"] = ""
+        out["strengths"] = []
+        out["gaps"] = []
+        out["strengths_cited"] = []
+        out["gaps_cited"] = []
+        out["score_reasoning"] = str(out.get("score_reasoning") or "").strip()
+        out["rubric_scores"] = _normalize_rubric_scores_list(out.get("rubric_scores"))
+        return out
     allowed = {
         str(e.get("chunk_id") or e.get("chunkId") or "").strip()
         for e in (retrieved_chunks or [])
@@ -1510,6 +1745,8 @@ def validate_evaluation_output(response: dict, retrieved_chunks: list[dict]) -> 
         ]
         out["gaps_cited"].append({"text": g["text"], "citations": cites})
 
+    out["rubric_scores"] = _normalize_rubric_scores_list(out.get("rubric_scores"))
+
     return out
 
 
@@ -1523,6 +1760,9 @@ def evaluate_answer(
     user_answer: str,
     evidence: list[dict],
     competency_label: str | None = None,
+    document_rubric_json: list[dict] | None = None,
+    evaluation_mode: str = "full",
+    evaluation_cache_document_id: uuid.UUID | None = None,
 ) -> dict:
     """
     Evidence-cited, competency-aware evaluation of a candidate answer.
@@ -1536,18 +1776,47 @@ def evaluate_answer(
       citations: list of {chunk_id, page_number, text},
       strengths_cited, gaps_cited (legacy cited shape for API),
       improved_answer (full rewrite targeting 9–10/10 per prompt rules),
+      rubric_scores: list of {name, score, reasoning} when document JD dimensions are provided,
       follow_up_questions, suggested_followup, evidence_used,
       plus evidence_for_scoring added by the caller stack.
 
     Parsed output is passed through :func:`validate_evaluation_output` (citation IDs,
     non-empty strengths/gaps). One retry is attempted if all model citations were invalid.
+
+    Model: :attr:`settings.openai_eval_chat_model` (default same as ``OPENAI_CHAT_MODEL``;
+    when ``USE_HIGH_QUALITY_EVAL`` is true, uses ``OPENAI_CHAT_MODEL_EVAL_HIGH``).
     """
     if not settings.openai_api_key:
         raise ValueError("OPENAI_API_KEY is not configured")
 
     rp = role_profile or DEFAULT_ROLE_PROFILE.copy()
+    mode = (evaluation_mode or "full").strip().lower()
+    if mode not in ("lite", "full"):
+        mode = "full"
+
     # Canonical {chunk_id, text, page_number, section_type} for prompt + citation_indices
     evidence_norm = normalize_evaluation_evidence(evidence or [])
+
+    eval_cache_key: str | None = None
+    if (
+        evaluation_cache_document_id
+        and settings.cache_ttl_evaluation_seconds > 0
+    ):
+        eval_cache_key = evaluation_cache_key(
+            evaluation_cache_document_id,
+            question,
+            user_answer,
+            document_rubric_json,
+            evaluation_mode=mode,
+        )
+        cached_eval = cache_get_json(eval_cache_key)
+        if isinstance(cached_eval, dict):
+            parsed = copy.deepcopy(cached_eval)
+            parsed = validate_evaluation_output(parsed, evidence_norm, mode)
+            if mode != "lite":
+                parsed["strengths"] = enrich_strength_highlights(parsed.get("strengths") or [], user_answer)
+            parsed["evidence_for_scoring"] = list(evidence_norm)
+            return parsed
 
     system_prompt, user_content = _build_domain_aware_evaluation_prompt(
         question=question,
@@ -1559,6 +1828,8 @@ def evaluate_answer(
         evidence=evidence_norm,
         role_profile=rp,
         answer_text=user_answer,
+        document_rubric_json=document_rubric_json,
+        evaluation_mode=mode,
     )
 
     client = OpenAI(api_key=settings.openai_api_key)
@@ -1566,9 +1837,13 @@ def evaluate_answer(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
-    eval_max_tokens = min(2048, max(settings.max_completion_tokens * 4, 1200))
+    if mode == "lite":
+        eval_max_tokens = min(900, max(settings.max_completion_tokens * 3, 500))
+    else:
+        eval_max_tokens = min(2048, max(settings.max_completion_tokens * 4, 1200))
+    eval_model = settings.openai_eval_chat_model
     response = client.chat.completions.create(
-        model=settings.openai_chat_model,
+        model=eval_model,
         messages=messages,
         max_tokens=eval_max_tokens,
     )
@@ -1576,12 +1851,18 @@ def evaluate_answer(
     raw = (response.choices[0].message.content or "").strip()
     parsed = _parse_evaluation_response(raw, evidence_norm)
     llm_citation_attempts = int(parsed.pop("_llm_citation_entries", 0) or 0)
-    parsed = validate_evaluation_output(parsed, evidence_norm)
-    parsed["strengths"] = enrich_strength_highlights(parsed.get("strengths") or [], user_answer)
+    parsed = validate_evaluation_output(parsed, evidence_norm, mode)
+    if mode != "lite":
+        parsed["strengths"] = enrich_strength_highlights(parsed.get("strengths") or [], user_answer)
     citation_count_after = len(parsed.get("citations") or [])
 
-    # Retry once if the model cited chunk_ids not in context (all filtered) but chunks exist
-    if llm_citation_attempts > 0 and citation_count_after == 0 and evidence_norm:
+    # Retry once if the model cited chunk_ids not in context (all filtered) but chunks exist (full mode only)
+    if (
+        mode != "lite"
+        and llm_citation_attempts > 0
+        and citation_count_after == 0
+        and evidence_norm
+    ):
         retry_user = (
             user_content
             + "\n\nIMPORTANT: Your previous reply listed citation chunk_ids that do not appear in "
@@ -1589,7 +1870,7 @@ def evaluate_answer(
             "a chunk_id from that section exactly. Return JSON only."
         )
         response = client.chat.completions.create(
-            model=settings.openai_chat_model,
+            model=eval_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": retry_user},
@@ -1599,8 +1880,12 @@ def evaluate_answer(
         raw = (response.choices[0].message.content or "").strip()
         parsed = _parse_evaluation_response(raw, evidence_norm)
         parsed.pop("_llm_citation_entries", None)
-        parsed = validate_evaluation_output(parsed, evidence_norm)
+        parsed = validate_evaluation_output(parsed, evidence_norm, mode)
         parsed["strengths"] = enrich_strength_highlights(parsed.get("strengths") or [], user_answer)
+
+    if eval_cache_key and settings.cache_ttl_evaluation_seconds > 0:
+        to_cache = copy.deepcopy(parsed)
+        cache_set_json(eval_cache_key, to_cache, settings.cache_ttl_evaluation_seconds)
 
     parsed["evidence_for_scoring"] = list(evidence_norm)
     return parsed
@@ -1664,13 +1949,32 @@ async def _retrieve_evidence_for_evaluation_query(
     competency_label: str | None,
     focus_area: str | None,
     top_k: int | None = None,
+    session_pool: list[dict] | None = None,
 ) -> list[dict]:
     """
     Retrieve top relevant JD chunks for the evaluation prompt (question + answer + competency).
+
+    When ``session_pool`` is provided (non-empty), re-ranks that pool with no vector query.
+
+    Otherwise cached by (document_id + question text hash) when CACHE_TTL_RETRIEVAL_SECONDS > 0,
+    then embed + retrieve_chunks.
     """
     k = top_k if top_k is not None else EVALUATION_QUERY_TOP_K
     parts = [question, (user_answer or "")[:500], competency_label or "", focus_area or ""]
     query_text = " ".join(p.strip() for p in parts if p and str(p).strip()).strip() or "job description requirements"
+
+    if session_pool is not None and len(session_pool) > 0:
+        ranked = _rank_pool_for_query(session_pool, query_text, k)
+        if ranked:
+            return ranked
+
+    retrieval_key: str | None = None
+    if settings.cache_ttl_retrieval_seconds > 0:
+        retrieval_key = retrieval_cache_key(document_id, question)
+        cached = await asyncio.to_thread(cache_get_json, retrieval_key)
+        if isinstance(cached, list):
+            return cached
+
     query_embedding = embed_query(query_text)
     chunks = await retrieve_chunks(
         db=db,
@@ -1683,7 +1987,15 @@ async def _retrieve_evidence_for_evaluation_query(
         doc_domain="job_description",
         source_types=["jd"],
     )
-    return [_retrieval_dict_to_evidence_item(c) for c in chunks]
+    result = [_retrieval_dict_to_evidence_item(c) for c in chunks]
+    if retrieval_key and settings.cache_ttl_retrieval_seconds > 0:
+        await asyncio.to_thread(
+            cache_set_json,
+            retrieval_key,
+            result,
+            settings.cache_ttl_retrieval_seconds,
+        )
+    return result
 
 
 async def evaluate_answer_with_retrieval(
@@ -1701,30 +2013,56 @@ async def evaluate_answer_with_retrieval(
     role_profile: dict,
     user_answer: str,
     evidence: list[dict],
+    evaluation_mode: str = "full",
+    session_id: uuid.UUID | None = None,
 ) -> dict:
     """
     Evaluate with question-linked evidence. Merges rubric chunks, optional competency
     and auxiliary retrieval, then top relevant JD chunks for (question + answer + competency),
     normalizes to citation-ready shapes, and calls :func:`evaluate_answer`.
+
+    When ``session_id`` is set, JD chunks are cached per session (one vector retrieval per session);
+    per-question relevance uses re-ranking from that pool instead of a separate vector query.
     """
+    session_pool: list[dict] | None = None
+    if session_id is not None:
+        try:
+            session_pool = await _get_or_create_session_jd_pool(
+                db, document_id, session_id, role_profile
+            )
+        except Exception as e:
+            logger.warning("Session JD pool retrieval failed: %s", e)
+            session_pool = []
+
     ev = list(evidence or [])
     seen = {str(e.get("chunk_id") or e.get("chunkId", "")) for e in ev}
 
-    # Thin JD evidence: retrieve more from JD
+    # Thin JD evidence: prefer session pool (no extra vector query), then competency retrieval
     if len(ev) < 2 and competency_label:
-        try:
-            extra = await _retrieve_evidence_for_competency(
-                db=db,
-                document_id=document_id,
-                competency_label=competency_label,
-            )
-            for e in extra:
-                cid = str(e.get("chunk_id") or e.get("chunkId", ""))
-                if cid and cid not in seen:
-                    seen.add(cid)
-                    ev.append(e)
-        except Exception as e:
-            logger.warning("Optional retrieval for evaluation failed: %s", e)
+        if session_pool:
+            try:
+                extra = _rank_pool_for_query(session_pool, competency_label, COMPETENCY_EVIDENCE_TOP_K)
+                for e in extra:
+                    cid = str(e.get("chunk_id") or e.get("chunkId", ""))
+                    if cid and cid not in seen:
+                        seen.add(cid)
+                        ev.append(e)
+            except Exception as e:
+                logger.warning("Session pool competency fill failed: %s", e)
+        if len(ev) < 2:
+            try:
+                extra = await _retrieve_evidence_for_competency(
+                    db=db,
+                    document_id=document_id,
+                    competency_label=competency_label,
+                )
+                for e in extra:
+                    cid = str(e.get("chunk_id") or e.get("chunkId", ""))
+                    if cid and cid not in seen:
+                        seen.add(cid)
+                        ev.append(e)
+            except Exception as e:
+                logger.warning("Optional retrieval for evaluation failed: %s", e)
 
     # Auxiliary sources: retrieve for tailored phrasing (resume, company, notes, incl. user account resume)
     try:
@@ -1748,6 +2086,7 @@ async def evaluate_answer_with_retrieval(
             user_answer=user_answer,
             competency_label=competency_label,
             focus_area=focus_area,
+            session_pool=session_pool if session_pool else None,
         )
         for e in query_ev:
             cid = str(e.get("chunk_id") or e.get("chunkId", ""))
@@ -1756,6 +2095,18 @@ async def evaluate_answer_with_retrieval(
                 ev.append(e)
     except Exception as e:
         logger.warning("Evaluation query retrieval failed: %s", e)
+
+    doc_rubric: list[dict] | None = None
+    try:
+        doc_r = await db.execute(select(Document).where(Document.id == document_id))
+        doc_row = doc_r.scalar_one_or_none()
+        raw_rj = getattr(doc_row, "rubric_json", None) if doc_row else None
+        if isinstance(raw_rj, list) and raw_rj:
+            doc_rubric = [x for x in raw_rj if isinstance(x, dict) and str(x.get("name", "")).strip()]
+            if not doc_rubric:
+                doc_rubric = None
+    except Exception as e:
+        logger.warning("Could not load document.rubric_json for evaluation: %s", e)
 
     return evaluate_answer(
         question=question,
@@ -1767,4 +2118,7 @@ async def evaluate_answer_with_retrieval(
         user_answer=user_answer,
         evidence=ev,
         competency_label=competency_label,
+        document_rubric_json=doc_rubric,
+        evaluation_mode=evaluation_mode,
+        evaluation_cache_document_id=document_id,
     )

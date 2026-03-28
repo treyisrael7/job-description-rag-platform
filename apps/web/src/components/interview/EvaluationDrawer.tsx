@@ -7,6 +7,7 @@ import type {
   EvidenceUsedItem,
   InterviewEvaluateResponse,
 } from "@/lib/api";
+import { RubricDimensionScores, normalizeRubricScoresForDisplay } from "./RubricDimensionScores";
 
 interface EvaluationDrawerProps {
   isOpen: boolean;
@@ -155,6 +156,9 @@ export function EvaluationDrawer({
   };
 
   const rows = result ? evidenceRows(result) : [];
+  const rubricDimensionItems = result
+    ? normalizeRubricScoresForDisplay(result.rubric_scores)
+    : [];
 
   return (
     <AnimatePresence>
@@ -232,6 +236,11 @@ export function EvaluationDrawer({
                         <p className="mt-1.5 text-sm leading-relaxed text-zenodrift-text">
                           {result.score_reasoning.trim()}
                         </p>
+                      </div>
+                    ) : null}
+                    {rubricDimensionItems.length > 0 ? (
+                      <div className="mt-5 w-full text-left">
+                        <RubricDimensionScores items={rubricDimensionItems} heading="Rubric dimensions" />
                       </div>
                     ) : null}
                     <div className="mt-4 flex flex-wrap justify-center gap-2">

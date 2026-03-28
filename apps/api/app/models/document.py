@@ -46,6 +46,7 @@ class Document(Base):
     doc_domain: Mapped[str] = mapped_column(nullable=False, default="general", server_default="general")
     role_profile: Mapped[dict | None] = mapped_column(JSONB(), nullable=True)
     competencies: Mapped[list | None] = mapped_column(JSONB(), nullable=True)
+    rubric_json: Mapped[list | None] = mapped_column(JSONB(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         server_default=text("now()"),
         nullable=False,

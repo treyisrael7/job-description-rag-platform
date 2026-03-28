@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import text
+from sqlalchemy import String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,3 +23,7 @@ class User(Base):
         server_default=text("now()"),
         nullable=False,
     )
+    # Billing / abuse control: limits enforced in app.services.evaluation_usage
+    plan: Mapped[str] = mapped_column(String(32), default="free", server_default="free")
+    evaluations_this_month: Mapped[int] = mapped_column(default=0, server_default="0")
+    evaluation_usage_month: Mapped[str | None] = mapped_column(String(7), nullable=True)

@@ -1,4 +1,9 @@
-"""LLM extraction of evaluation dimensions (rubric) from job description text."""
+"""LLM extraction of evaluation dimensions (rubric) from job description text.
+
+Uses ``settings.openai_chat_model`` (default: gpt-4o-mini). Final answer evaluation may use a
+higher-quality model via ``USE_HIGH_QUALITY_EVAL``; rubric extraction always stays on the
+default/cheaper chat model.
+"""
 
 import json
 import logging

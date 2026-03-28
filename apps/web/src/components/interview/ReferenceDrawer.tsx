@@ -7,6 +7,7 @@ import type {
   InterviewEvaluateResponse,
   EvidenceUsedItem,
 } from "@/lib/api";
+import { RubricDimensionScores, normalizeRubricScoresForDisplay } from "./RubricDimensionScores";
 
 type Tab = "evidence" | "rubric";
 
@@ -107,6 +108,10 @@ export function ReferenceDrawer({
   const hasFlatEvidence =
     !hasCitedEvidence &&
     (lastEval?.evidence_used?.length ?? 0) > 0;
+
+  const storedRubricScores = normalizeRubricScoresForDisplay(
+    lastEval?.rubric_scores ?? question?.evaluation_json?.rubric_scores
+  );
 
   return (
     <AnimatePresence>
@@ -331,6 +336,13 @@ export function ReferenceDrawer({
 
               {activeTab === "rubric" && (
                 <div className="space-y-6">
+                  {storedRubricScores.length > 0 && (
+                    <RubricDimensionScores
+                      items={storedRubricScores}
+                      heading="Your scores by dimension"
+                      className="rounded-xl border border-slate-200/90 bg-slate-50/50 px-3 py-3 sm:px-4"
+                    />
+                  )}
                   {question?.competency_label?.trim() && (
                     <section>
                       <h3 className="mb-1.5 text-xs font-medium uppercase tracking-wider text-zenodrift-text-muted">

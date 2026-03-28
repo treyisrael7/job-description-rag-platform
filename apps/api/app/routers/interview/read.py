@@ -8,10 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import assert_resource_ownership, get_current_user
 from app.db.session import get_db
-from app.models import InterviewAnswer, InterviewQuestion, InterviewSession, User
+from app.models import Document, InterviewAnswer, InterviewQuestion, InterviewSession, User
 from app.routers.interview.helpers import from_rubric, norm_question_type_for_api, question_to_output, to_role_profile_out
 from app.routers.interview.router import router
-from app.routers.interview.schemas import EvidenceItem, QuestionDetail, SessionDetail, SessionSummary
+from app.routers.interview.schemas import (
+    EvidenceItem,
+    QuestionDetail,
+    RubricDimensionOut,
+    SessionDetail,
+    SessionSummary,
+)
 from app.services.adaptive_engine import adaptive_focus_label
 
 
@@ -82,6 +88,17 @@ async def get_session(
     raw_pp = getattr(session, "performance_profile", None)
     pp_dict = raw_pp if isinstance(raw_pp, dict) and raw_pp else None
 
+    doc_r = await db.execute(select(Document).where(Document.id == session.document_id))
+    doc_row = doc_r.scalar_one_or_none()
+    rubric_json = None
+    rj = getattr(doc_row, "rubric_json", None) if doc_row else None
+    if isinstance(rj, list) and rj:
+        rubric_json = [
+            RubricDimensionOut(name=str(x.get("name", "")), description=str(x.get("description", "")))
+            for x in rj
+            if isinstance(x, dict) and str(x.get("name", "")).strip()
+        ] or None
+
     return SessionDetail(
         id=session.id,
         user_id=session.user_id,
@@ -95,6 +112,7 @@ async def get_session(
         ],
         performance_profile=pp_dict,
         adaptive_focus_label=adaptive_focus_label(pp_dict),
+        rubric_json=rubric_json,
     )
 
 
