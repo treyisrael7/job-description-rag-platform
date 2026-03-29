@@ -57,7 +57,7 @@ async def test_retrieve_chunks_hybrid_marks_both_sources(demo_key_off, monkeypat
             "embedding": mock_vec,
         }]
 
-    monkeypatch.setattr("app.services.retrieval.retrieve_chunks_keyword", _mock_keyword)
+    monkeypatch.setattr("app.services.retrieval.orchestration.retrieve_chunks_keyword", _mock_keyword)
 
     from app.db.base import async_session_maker
     async with async_session_maker() as db:
@@ -114,7 +114,7 @@ async def test_retrieve_chunks_hybrid_falls_back_to_semantic_on_keyword_error(de
     async def _failing_keyword(**kwargs):
         raise RuntimeError("fts unavailable")
 
-    monkeypatch.setattr("app.services.retrieval.retrieve_chunks_keyword", _failing_keyword)
+    monkeypatch.setattr("app.services.retrieval.orchestration.retrieve_chunks_keyword", _failing_keyword)
 
     from app.db.base import async_session_maker
     async with async_session_maker() as db:
@@ -148,7 +148,7 @@ async def test_retrieve_chunks_semantic_only_when_hybrid_disabled(demo_key_off, 
     async def _unexpected_keyword(**kwargs):
         raise AssertionError("keyword retrieval should not run when hybrid is disabled")
 
-    monkeypatch.setattr("app.services.retrieval.retrieve_chunks_keyword", _unexpected_keyword)
+    monkeypatch.setattr("app.services.retrieval.orchestration.retrieve_chunks_keyword", _unexpected_keyword)
 
     seeded = await seed_document_bundle(
         user_email="semantic-only@t.local",
@@ -219,8 +219,8 @@ async def test_retrieve_chunks_hybrid_can_surface_keyword_only_hits(demo_key_off
             "sourceTitle": "Platform Engineer JD",
         }]
 
-    monkeypatch.setattr("app.services.retrieval._retrieve_semantic_candidates", _mock_semantic)
-    monkeypatch.setattr("app.services.retrieval.retrieve_chunks_keyword", _mock_keyword)
+    monkeypatch.setattr("app.services.retrieval.orchestration._retrieve_semantic_candidates", _mock_semantic)
+    monkeypatch.setattr("app.services.retrieval.orchestration.retrieve_chunks_keyword", _mock_keyword)
 
     chunks = await retrieve_chunks(
         db=None,

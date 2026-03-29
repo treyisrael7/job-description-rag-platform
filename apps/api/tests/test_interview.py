@@ -225,7 +225,7 @@ async def test_interview_generate_success_creates_session(client, demo_key_off, 
         return mock_questions[: kwargs.get("num_questions", 2)]
 
     monkeypatch.setattr("app.services.retrieval.embed_query", _mock_embed)
-    monkeypatch.setattr("app.services.interview.embed_query", _mock_embed)
+    monkeypatch.setattr("app.services.retrieval.embed_query", _mock_embed)
     monkeypatch.setattr("app.routers.interview.runtime.generate_questions", _mock_generate_questions)
     monkeypatch.setattr(settings, "openai_api_key", "sk-test")
 

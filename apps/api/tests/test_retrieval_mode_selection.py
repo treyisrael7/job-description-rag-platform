@@ -38,7 +38,7 @@ async def test_retrieve_chunks_for_mode_semantic_returns_semantic_results(monkey
     async def _mock_semantic(**kwargs):
         return [_candidate(chunk_id="semantic-1", score=0.95)]
 
-    monkeypatch.setattr("app.services.retrieval._retrieve_semantic_candidates", _mock_semantic)
+    monkeypatch.setattr("app.services.retrieval.orchestration._retrieve_semantic_candidates", _mock_semantic)
 
     chunks = await retrieve_chunks_for_mode(
         db=None,
@@ -61,7 +61,7 @@ async def test_retrieve_chunks_for_mode_keyword_returns_keyword_results(monkeypa
     async def _mock_keyword(**kwargs):
         return [_candidate(chunk_id="keyword-1", score=0.75, retrieval_source="keyword")]
 
-    monkeypatch.setattr("app.services.retrieval.retrieve_chunks_keyword", _mock_keyword)
+    monkeypatch.setattr("app.services.retrieval.orchestration.retrieve_chunks_keyword", _mock_keyword)
 
     chunks = await retrieve_chunks_for_mode(
         db=None,
@@ -89,8 +89,8 @@ async def test_retrieve_chunks_for_mode_hybrid_merges_semantic_and_keyword(monke
         candidate["content_hash"] = "same-content"
         return [candidate]
 
-    monkeypatch.setattr("app.services.retrieval._retrieve_semantic_candidates", _mock_semantic)
-    monkeypatch.setattr("app.services.retrieval.retrieve_chunks_keyword", _mock_keyword)
+    monkeypatch.setattr("app.services.retrieval.orchestration._retrieve_semantic_candidates", _mock_semantic)
+    monkeypatch.setattr("app.services.retrieval.orchestration.retrieve_chunks_keyword", _mock_keyword)
 
     chunks = await retrieve_chunks_for_mode(
         db=None,
@@ -152,8 +152,8 @@ async def test_production_budget_invokes_scoped_keyword_for_resume(monkeypatch) 
             return [_candidate(chunk_id="cv-sem", score=0.9)]
         return []
 
-    monkeypatch.setattr("app.services.retrieval.retrieve_chunks_keyword", _mock_keyword)
-    monkeypatch.setattr("app.services.retrieval._retrieve_semantic_candidates", _mock_semantic)
+    monkeypatch.setattr("app.services.retrieval.orchestration.retrieve_chunks_keyword", _mock_keyword)
+    monkeypatch.setattr("app.services.retrieval.orchestration._retrieve_semantic_candidates", _mock_semantic)
 
     primary_id = uuid.uuid4()
     resume_id = uuid.uuid4()
