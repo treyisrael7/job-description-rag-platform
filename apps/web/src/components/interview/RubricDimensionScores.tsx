@@ -45,7 +45,7 @@ interface RubricDimensionScoresProps {
 }
 
 /**
- * Lists role-specific dimension scores as `Name — x/10` with expandable reasoning per row.
+ * Lists role-specific dimension scores as Name: x/10 with expandable reasoning per row.
  */
 export function RubricDimensionScores({
   items,
@@ -71,7 +71,7 @@ export function RubricDimensionScores({
                 >
                   <span className="min-w-0 flex-1 leading-snug">
                     <span className="text-zenodrift-text">{r.name}</span>
-                    <span className="text-zenodrift-text-muted"> — </span>
+                    <span className="text-zenodrift-text-muted">: </span>
                     <span className={`tabular-nums font-semibold ${scoreColorClass(r.score)}`}>
                       {formatScoreTen(r.score)}
                     </span>

@@ -72,6 +72,7 @@ export function useUploadJobDescriptionMutation() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
+      qc.invalidateQueries({ queryKey: ["analyzeFitLatest"] });
     },
   });
 }
@@ -83,6 +84,7 @@ export function useIngestDocumentMutation() {
     onSuccess: (_, documentId) => {
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
       qc.invalidateQueries({ queryKey: queryKeys.document(documentId) });
+      qc.invalidateQueries({ queryKey: ["analyzeFitLatest"] });
     },
   });
 }
@@ -94,6 +96,7 @@ export function useDeleteDocumentMutation() {
     onSuccess: (_, documentId) => {
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
       qc.removeQueries({ queryKey: queryKeys.document(documentId) });
+      qc.invalidateQueries({ queryKey: ["analyzeFitLatest"] });
     },
   });
 }
@@ -105,6 +108,7 @@ export function useDeleteAllDocumentsMutation() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
       qc.removeQueries({ queryKey: ["document"], exact: false });
+      qc.invalidateQueries({ queryKey: ["analyzeFitLatest"] });
     },
   });
 }

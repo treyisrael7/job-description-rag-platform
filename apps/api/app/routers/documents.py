@@ -4,7 +4,7 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import assert_resource_ownership, get_current_user
@@ -13,6 +13,7 @@ from app.db.session import get_db
 from app.models import Document, DocumentChunk, InterviewSource, User
 from app.services.gap_analysis import generate_gap_analysis
 from app.services.ingestion import run_ingestion
+from app.services.interview.constants import USER_RESUME_DOC_DOMAIN
 from app.services.storage import get_storage
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -176,10 +177,16 @@ async def list_documents(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List documents for a user."""
+    """List documents for a user (job descriptions and other uploads; not the account resume)."""
     result = await db.execute(
         select(Document)
-        .where(Document.user_id == current_user.id)
+        .where(
+            Document.user_id == current_user.id,
+            or_(
+                Document.doc_domain.is_(None),
+                Document.doc_domain != USER_RESUME_DOC_DOMAIN,
+            ),
+        )
         .order_by(Document.created_at.desc())
     )
     docs = result.scalars().all()
@@ -196,9 +203,19 @@ async def delete_all_documents(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete all documents for the current user. Removes files from storage."""
+    """
+    Delete all listed documents for the current user (job descriptions, etc.).
+    The account resume (``user_resume``) is not deleted here. To remove it, use
+    ``DELETE /user/resume`` or the dashboard.
+    """
     result = await db.execute(
-        select(Document).where(Document.user_id == current_user.id)
+        select(Document).where(
+            Document.user_id == current_user.id,
+            or_(
+                Document.doc_domain.is_(None),
+                Document.doc_domain != USER_RESUME_DOC_DOMAIN,
+            ),
+        )
     )
     docs = result.scalars().all()
     storage = get_storage()

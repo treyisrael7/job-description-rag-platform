@@ -543,6 +543,7 @@ _SYSTEM_PROMPT = """You are an expert recruiter. In a single pass over the excer
 
 Rules:
 - Use ONLY information present in JOB_EXCERPTS and RESUME_EXCERPTS. If the resume does not mention something, do not invent experience.
+- Degree and education requirements (e.g. Bachelor's in a field): treat RESUME_EXCERPTS holistically — if the resume states a degree, major, minor, university, or graduation, that counts as evidence even if phrasing differs slightly from the JD (e.g. "Bachelor of Computer Science" satisfies "Bachelor's degree in a technical field").
 - Each "requirement" in matches and gaps must be traceable to JOB_EXCERPTS (paraphrase is OK; do not fabricate JD content).
 - resume_evidence must quote or tightly paraphrase RESUME_EXCERPTS; use an empty string if there is no supporting resume text.
 - confidence: 0.0–1.0 for how strongly the resume supports the requirement (use low values if evidence is thin).

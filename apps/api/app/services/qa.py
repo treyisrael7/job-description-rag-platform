@@ -14,32 +14,38 @@ logger = logging.getLogger(__name__)
 # OpenAI sampling: keep deterministic, within 0–0.3 per product guidance.
 QA_TEMPERATURE = 0.2
 
-_SYSTEM_PROMPT = """You are an AI recruiter analyzing candidate-job fit.
+_SYSTEM_PROMPT = """You are a strict hiring analyst comparing a job description to a resume.
 
 You are given:
 1. Job description excerpts
 2. Candidate resume excerpts
 
 Tasks:
-- Extract key job requirements
-- Match them to candidate experience
-- Identify gaps
-- Assign a fit score (0–100)
-- Provide reasoning grounded ONLY in provided excerpts
+- Extract key job requirements from the JD excerpts only
+- For each requirement, decide if the resume proves same-kind experience (strict bar below)
+- Put unmet or weakly supported requirements in gaps, not matches
+- Assign fit_score 0–100 that reflects strict matches vs gaps
+- Reasoning must reference only what appears in the excerpts
 
-Rules:
+Strict matching rules (critical):
+- A row belongs in "matches" only if resume text shows explicit experience in the same professional domain as the requirement. Do not use loose analogies ("both involve data/numbers/automation/cross-functional work").
+- For finance, FP&A, accounting, treasury, or corporate reporting roles: matches require finance-adjacent work (for example budgeting, forecasting, financial models, P&L or variance work, management or executive reporting, expense review, KPIs for the business, incentive comp design). Generic software shipping, unrelated product dashboards, sports or fantasy analytics, or RPA in unrelated domains do NOT count unless the resume clearly ties that work to financial or operational reporting for an organization.
+- Education alone (degree/minor/coursework) does not satisfy substantive job duties like "developing financial models" or "executive reporting" unless the requirement is explicitly education-only.
+- When unsure, use "gaps", not "matches". Prefer more gaps and a lower fit_score over generous stretching.
+- Do not invent resume content; paraphrase only what appears in resume excerpts.
+
+Other rules:
 - Do not hallucinate
-- If evidence is missing, mark as a gap
-- Always cite evidence implicitly in reasoning
+- If resume excerpts are empty, all requirements are gaps and fit_score should be very low
 
 Return STRICT JSON only."""
 
 _JSON_SHAPE_INSTRUCTIONS = """
 Return one JSON object with exactly these keys (no markdown, no code fences, no extra keys):
 - "key_job_requirements": array of strings (each requirement must be grounded in job description excerpts)
-- "matches": array of objects, each with "requirement" (string), "candidate_experience" (string), "alignment_notes" (string)
-- "gaps": array of objects, each with "requirement" (string), "reason" (string)
-- "fit_score": integer from 0 through 100
+- "matches": array of objects, each with "requirement" (string), "candidate_experience" (string), "alignment_notes" (string). Only include strong same-domain matches per system rules.
+- "gaps": array of objects, each with "requirement" (string), "reason" (string). Include every JD requirement not in "matches", plus any you would have weakly matched under a loose standard.
+- "fit_score": integer from 0 through 100 (aligned with strict matches vs gaps)
 - "reasoning": string (overall narrative; only claims supported by the excerpts above)
 """
 
@@ -108,7 +114,7 @@ def generate_grounded_answer(
 
     if not chunks:
         return (
-            "I don't have enough information in this document to answer that.",
+            "We could not find enough in the job and resume snippets to answer that. Try asking in a different way.",
             [],
         )
 
@@ -146,6 +152,115 @@ def generate_grounded_answer(
         answer = json.dumps(payload, ensure_ascii=False)
     except (json.JSONDecodeError, TypeError, ValueError) as e:
         logger.warning("QA JSON parse failed, returning raw model text: %s", e)
+        answer = raw
+
+    citations = [
+        {
+            "chunk_id": str(c.get("chunk_id") or c.get("chunkId") or ""),
+            "page_number": int(c.get("page_number") if c.get("page_number") is not None else c.get("page") or 0),
+            "snippet": normalize_jd_text(c.get("snippet", "")),
+        }
+        for c in budget_chunks
+    ]
+
+    return answer, citations
+
+
+# --- Profile resume coaching ---
+
+_RESUME_COACH_SYSTEM = """You are a friendly, practical resume coach talking to one person.
+
+You only see excerpts from their resume.
+
+How to help:
+- Answer their question using only what appears in the resume excerpts.
+- Give concrete, doable advice: clearer wording, stronger bullets, better structure, what to trim, ATS-friendly phrasing when it helps.
+- Offer specific rewrite ideas and bullet patterns instead of generic praise.
+- If the excerpts are too thin to answer, say so briefly in coaching_reply and suggest what they could add to the resume.
+- Never invent employers, degrees, tools, or numbers that are not supported by the excerpts.
+
+Return STRICT JSON only."""
+
+_RESUME_COACH_JSON = """
+Return one JSON object with exactly these keys (no markdown, no code fences, no extra keys):
+- "coaching_reply": string (direct answer to the user's question)
+- "prioritized_edits": array of objects, each with "focus" (string), "observation" (string), "suggestion" (string). Use [] if none apply.
+- "strengths_to_keep": array of strings (what is already working on the resume). Use [] if none.
+- "reasoning": string (short note tying your advice to specific phrases or sections visible in the excerpts)
+"""
+
+
+def _split_all_chunks_as_resume(chunks: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Primary resume-doc chunks may be labeled JD internally; treat all as resume for coaching."""
+    return [], [{**c} for c in chunks]
+
+
+def _build_resume_coach_user_content(
+    _jd_chunks: list[dict],
+    resume_chunks: list[dict],
+    question: str,
+) -> str:
+    resume_block, _ = _format_excerpt_block("Resume excerpts", resume_chunks, start_index=1)
+    return f"""{resume_block}
+
+User question:
+{question.strip()}
+
+{_RESUME_COACH_JSON.strip()}
+"""
+
+
+def generate_resume_improvement_answer(
+    question: str,
+    chunks: list[dict],
+    max_tokens: int | None = None,
+) -> tuple[str, list[dict]]:
+    """
+    Grounded resume coaching. ``answer`` is a JSON string; citations mirror chunks used.
+    """
+    max_tokens = max_tokens or settings.max_completion_tokens
+    max_tokens = max(max_tokens, 1200)
+
+    if not chunks:
+        return (
+            "We could not pull enough text from your resume to answer that. Try a broader question or re-upload your PDF if something looks wrong.",
+            [],
+        )
+
+    if not settings.openai_api_key:
+        raise ValueError("OPENAI_API_KEY is not configured")
+
+    budget_chunks, user_content, effective_max_tokens = budget_grounded_qa_prompt(
+        question=question,
+        chunks=chunks,
+        system_prompt=_RESUME_COACH_SYSTEM,
+        split_chunks=_split_all_chunks_as_resume,
+        build_user_content=lambda jd_c, rs_c: _build_resume_coach_user_content(jd_c, rs_c, question),
+        requested_completion_tokens=max_tokens,
+        total_budget=settings.max_llm_budget_tokens,
+    )
+
+    client = OpenAI(api_key=settings.openai_api_key)
+    response = client.chat.completions.create(
+        model=settings.model_fast,
+        messages=[
+            {"role": "system", "content": _RESUME_COACH_SYSTEM},
+            {"role": "user", "content": user_content},
+        ],
+        max_tokens=effective_max_tokens,
+        temperature=QA_TEMPERATURE,
+        response_format={"type": "json_object"},
+    )
+
+    raw = (response.choices[0].message.content or "").strip()
+    answer: str
+    try:
+        payload = json.loads(_extract_json_object(raw))
+        if not isinstance(payload, dict):
+            raise TypeError("root must be object")
+        answer = json.dumps(payload, ensure_ascii=False)
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        logger.warning("Resume coach JSON parse failed, returning raw model text: %s", e)
         answer = raw
 
     citations = [

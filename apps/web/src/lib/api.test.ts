@@ -67,6 +67,65 @@ describe("api", () => {
     });
   });
 
+  describe("analyzeFit", () => {
+    it("POSTs job_description_id and resume_id", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              matches: [],
+              gaps: [],
+              fit_score: 50,
+              summary: "ok",
+              recommendations: [],
+            })
+          ),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { analyzeFit } = await import("./api");
+      await analyzeFit({
+        jobDescriptionId: "jd-uuid",
+        resumeId: "rs-uuid",
+      });
+
+      const [, init] = mockFetch.mock.calls[0];
+      const body = JSON.parse((init as RequestInit).body as string);
+      expect(body).toEqual({
+        job_description_id: "jd-uuid",
+        resume_id: "rs-uuid",
+      });
+    });
+
+    it("includes question when provided", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              matches: [],
+              gaps: [],
+              fit_score: 0,
+              summary: "",
+              recommendations: [],
+            })
+          ),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { analyzeFit } = await import("./api");
+      await analyzeFit({
+        jobDescriptionId: "a",
+        resumeId: "b",
+        question: "  FP&A focus  ",
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.question).toBe("FP&A focus");
+    });
+  });
+
   describe("ask", () => {
     it("sends document_id and question only (no user_id)", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
@@ -82,6 +141,100 @@ describe("api", () => {
       expect(body.user_id).toBeUndefined();
       expect(body.document_id).toBe("doc-123");
       expect(body.question).toBe("What is the salary?");
+      expect(body.additional_document_ids).toBeUndefined();
+    });
+
+    it("parseAskStructuredAnswer returns typed object for valid JSON", async () => {
+      const { parseAskStructuredAnswer } = await import("./api");
+      const json = JSON.stringify({
+        key_job_requirements: ["Python"],
+        matches: [
+          {
+            requirement: "Python",
+            candidate_experience: "5 years",
+            alignment_notes: "Strong",
+          },
+        ],
+        gaps: [{ requirement: "Rust", reason: "Not listed" }],
+        fit_score: 72,
+        reasoning: "Good Python fit.",
+      });
+      const p = parseAskStructuredAnswer(json);
+      expect(p).not.toBeNull();
+      expect(p!.fit_score).toBe(72);
+      expect(p!.matches).toHaveLength(1);
+      expect(p!.gaps).toHaveLength(1);
+      expect(p!.key_job_requirements).toEqual(["Python"]);
+    });
+
+    it("parseAskStructuredAnswer coerces missing alignment_notes to empty string", async () => {
+      const { parseAskStructuredAnswer } = await import("./api");
+      const json = JSON.stringify({
+        key_job_requirements: [],
+        matches: [{ requirement: "A", candidate_experience: "B" }],
+        gaps: [],
+        fit_score: 50,
+        reasoning: "x",
+      });
+      const p = parseAskStructuredAnswer(json);
+      expect(p?.matches[0].alignment_notes).toBe("");
+    });
+
+    it("parseAskStructuredAnswer returns null for non-JSON", async () => {
+      const { parseAskStructuredAnswer } = await import("./api");
+      expect(parseAskStructuredAnswer("plain text")).toBeNull();
+      expect(parseAskStructuredAnswer("{")).toBeNull();
+    });
+
+    it("askProfileResumeCoach POSTs question to /user/resume/ask", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () =>
+          Promise.resolve(JSON.stringify({ answer: "{}", citations: [] })),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { askProfileResumeCoach } = await import("./api");
+      await askProfileResumeCoach("How can I improve my bullets?");
+
+      expect(mockFetch.mock.calls[0][0]).toContain("/user/resume/ask");
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body).toEqual({ question: "How can I improve my bullets?" });
+    });
+
+    it("parseResumeCoachAnswer returns typed object for valid JSON", async () => {
+      const { parseResumeCoachAnswer } = await import("./api");
+      const json = JSON.stringify({
+        coaching_reply: "Add metrics.",
+        prioritized_edits: [
+          {
+            focus: "Experience",
+            observation: "Vague verbs",
+            suggestion: "Use numbers",
+          },
+        ],
+        strengths_to_keep: ["Clear education"],
+        reasoning: "Based on page 1.",
+      });
+      const p = parseResumeCoachAnswer(json);
+      expect(p).not.toBeNull();
+      expect(p!.coaching_reply).toBe("Add metrics.");
+      expect(p!.prioritized_edits).toHaveLength(1);
+      expect(p!.strengths_to_keep).toEqual(["Clear education"]);
+    });
+
+    it("includes additional_document_ids when resumeDocumentId is set", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ answer: "{}", citations: [] })),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { ask } = await import("./api");
+      await ask("doc-jd", "Fit?", { resumeDocumentId: "doc-resume-uuid" });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.additional_document_ids).toEqual(["doc-resume-uuid"]);
     });
   });
 

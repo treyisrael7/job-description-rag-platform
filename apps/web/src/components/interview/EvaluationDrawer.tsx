@@ -110,7 +110,7 @@ function evidenceRows(result: InterviewEvaluateResponse): Array<{
     return citations.map((c: EvaluationCitation, i: number) => ({
       key: `c-${c.chunk_id}-${i}`,
       page: c.page_number ?? 0,
-      text: c.text?.trim() || "—",
+      text: c.text?.trim() || "n/a",
       sourceLabel: "Job description",
     }));
   }
@@ -118,7 +118,7 @@ function evidenceRows(result: InterviewEvaluateResponse): Array<{
   return used.map((e: EvidenceUsedItem, i: number) => ({
     key: `e-${e.chunkId ?? e.sourceId}-${i}`,
     page: e.page ?? 0,
-    text: e.quote?.trim() || "—",
+    text: e.quote?.trim() || "n/a",
     sourceLabel: e.sourceType === "jd" ? "Job description" : e.sourceTitle || e.sourceType || "Source",
   }));
 }
@@ -208,7 +208,7 @@ export function EvaluationDrawer({
                     </div>
                   ) : null}
 
-                  {/* Score — prominent */}
+                  {/* Score (prominent) */}
                   <div className="rounded-2xl border border-slate-200/90 bg-gradient-to-b from-slate-50 to-white px-5 py-6 text-center shadow-sm ring-1 ring-slate-100/80">
                     <p className="text-[11px] font-semibold uppercase tracking-widest text-zenodrift-text-muted">
                       Score
@@ -416,7 +416,7 @@ export function EvaluationDrawer({
                         Stronger answer (9–10 / 10)
                       </h3>
                       <p className="mt-1 text-[11px] leading-snug text-zenodrift-text-muted">
-                        Rewritten from your answer—same idea, more depth, realistic detail.
+                        Same idea as your answer, with a bit more depth and realistic detail.
                       </p>
                       <p className="mt-2 text-sm leading-relaxed text-zenodrift-text">{result.improved_answer}</p>
                     </div>

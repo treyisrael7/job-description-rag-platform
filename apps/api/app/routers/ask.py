@@ -155,6 +155,20 @@ async def ask(
                 doc_domain=doc_domain,
                 additional_document_ids=additional_for_retrieval,
             )
+        # Resume chunks used to be stored as doc_domain=general while the parent Document
+        # used user_resume or job_description; primary retrieval filtered them out entirely.
+        if not chunks and doc_domain:
+            chunks = await retrieve_chunks(
+                db=db,
+                document_id=body.document_id,
+                query_embedding=query_embedding,
+                query_text=body.question,
+                top_k=min(ASK_TOP_K, settings.top_k_max),
+                include_low_signal=False,
+                section_types=None,
+                doc_domain=None,
+                additional_document_ids=additional_for_retrieval,
+            )
     except Exception as e:
         logger.exception("retrieve_chunks failed")
         raise HTTPException(status_code=503, detail=f"Retrieval failed: {str(e)[:200]}")

@@ -52,7 +52,10 @@ class Settings(BaseSettings):
 
     # Hard limits (config via env)
     max_pdf_mb: int = 10  # MAX_PDF_MB
+    # Job descriptions and general documents: reject PDFs with more than this many pages.
     max_pdf_pages: int = 20  # MAX_PDF_PAGES
+    # Account resume PDF: stricter page cap to limit embeddings and discourage wrong uploads.
+    max_resume_pdf_pages: int = 5  # MAX_RESUME_PDF_PAGES
     max_chunks_per_doc: int = 300  # MAX_CHUNKS_PER_DOC
     top_k_max: int = 8  # TOP_K_MAX
     max_completion_tokens: int = 500  # MAX_COMPLETION_TOKENS

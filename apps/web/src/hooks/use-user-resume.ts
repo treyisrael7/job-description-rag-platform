@@ -28,6 +28,7 @@ export function useUploadUserResumeMutation() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.userResume() });
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
+      qc.invalidateQueries({ queryKey: ["analyzeFitLatest"] });
     },
   });
 }
@@ -39,6 +40,7 @@ export function useDeleteUserResumeMutation() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.userResume() });
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
+      qc.invalidateQueries({ queryKey: ["analyzeFitLatest"] });
     },
   });
 }

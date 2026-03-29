@@ -11,6 +11,8 @@ from app.core.config import settings
 from app.models import Document, DocumentChunk, InterviewSource
 from app.services.chunking import chunk_pages
 from app.services.ingestion import _create_embeddings
+from app.services.pdf_pages import pdf_page_count
+from app.services.resume_validation import validate_resume_text
 from app.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -20,14 +22,19 @@ MAX_TEXT_CHARS = 100_000
 MAX_URL_FETCH_CHARS = 50_000
 
 
-def _extract_text_per_page(pdf_bytes: bytes) -> list[tuple[int, str]]:
-    """Extract text per page using PyMuPDF."""
+def _extract_text_per_page(
+    pdf_bytes: bytes,
+    *,
+    max_pages: int | None = None,
+) -> list[tuple[int, str]]:
+    """Extract text per page using PyMuPDF (up to ``max_pages`` or ``settings.max_pdf_pages``)."""
     import fitz  # PyMuPDF
 
+    cap = max_pages if max_pages is not None else settings.max_pdf_pages
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
         result = []
-        limit = min(len(doc), settings.max_pdf_pages)
+        limit = min(len(doc), cap)
         for i in range(limit):
             page = doc[i]
             text = page.get_text(sort=True)
@@ -58,6 +65,9 @@ async def ingest_text_source(
     if not content:
         raise ValueError("Content is empty")
 
+    if source_type == "resume":
+        validate_resume_text(content)
+
     result = await db.execute(select(Document).where(Document.id == document_id))
     doc = result.scalar_one_or_none()
     if not doc:
@@ -85,6 +95,7 @@ async def ingest_text_source(
     db.add(source)
     await db.flush()
 
+    chunk_domain = (doc.doc_domain or "").strip() or "general"
     for i, (cr, emb) in enumerate(zip(chunk_results, embeddings)):
         chunk = DocumentChunk(
             document_id=document_id,
@@ -98,7 +109,7 @@ async def ingest_text_source(
             is_low_signal=cr.is_low_signal,
             content_hash=cr.content_hash,
             section_type=cr.section_type,
-            doc_domain="general",
+            doc_domain=chunk_domain,
             skills_detected=cr.skills_detected,
             embedding=emb,
         )
@@ -132,11 +143,25 @@ async def ingest_resume_pdf(
 
     storage = get_storage()
     pdf_bytes = storage.download(s3_key)
-    page_texts = _extract_text_per_page(pdf_bytes)
+
+    total_pages = pdf_page_count(pdf_bytes)
+    if total_pages > settings.max_resume_pdf_pages:
+        raise ValueError(
+            f"Resume PDF has {total_pages} pages; maximum allowed is {settings.max_resume_pdf_pages}. "
+            "Please upload a shorter resume or CV."
+        )
+
+    page_texts = _extract_text_per_page(
+        pdf_bytes,
+        max_pages=settings.max_resume_pdf_pages,
+    )
     if not page_texts:
         raise ValueError("No text extracted from PDF")
 
     page_texts_norm = [(i, t) for i, t in page_texts if t.strip()]
+
+    combined = "\n\n".join(t for _, t in page_texts_norm)
+    validate_resume_text(combined)
 
     chunk_results = chunk_pages(
         page_texts_norm,
@@ -160,6 +185,7 @@ async def ingest_resume_pdf(
     db.add(source)
     await db.flush()
 
+    chunk_domain = (doc.doc_domain or "").strip() or "general"
     for i, (cr, emb) in enumerate(zip(chunk_results, embeddings)):
         chunk = DocumentChunk(
             document_id=document_id,
@@ -173,7 +199,7 @@ async def ingest_resume_pdf(
             is_low_signal=cr.is_low_signal,
             content_hash=cr.content_hash,
             section_type=cr.section_type,
-            doc_domain="general",
+            doc_domain=chunk_domain,
             skills_detected=cr.skills_detected,
             embedding=emb,
         )

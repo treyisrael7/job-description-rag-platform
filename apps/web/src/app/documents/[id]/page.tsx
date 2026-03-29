@@ -1,14 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { GradientShell } from "@/components/GradientShell";
 import { InterviewFocusMode } from "@/components/interview/InterviewFocusMode";
-import { ApiError, type AskResponse } from "@/lib/api";
+import {
+  ApiError,
+  getAnalyzeFitLatest,
+  parseAskStructuredAnswer,
+  type AskResponse,
+} from "@/lib/api";
+import { AnalyzeFitDisplay } from "@/components/AnalyzeFitDisplay";
+import { AskAnswerDisplay } from "@/components/AskAnswerDisplay";
 import { formatQueryError } from "@/lib/query-error";
+import { useAnalyzeFitMutation } from "@/hooks/use-analyze-fit";
+import { queryKeys } from "@/lib/query-keys";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDocument, useDeleteDocumentMutation } from "@/hooks/use-documents";
 import { useAskQuestionMutation } from "@/hooks/use-ask-question";
+import { useUserResume } from "@/hooks/use-user-resume";
+
 const STATUS_LABELS: Record<string, string> = {
   pending: "Pending",
   uploaded: "Uploaded",
@@ -26,14 +38,15 @@ const STATUS_STYLES: Record<string, string> = {
   failed: "text-red-700 bg-red-100/80 ring-1 ring-red-200/60",
 };
 
-type Tab = "chat" | "interview";
+type Tab = "chat" | "fit" | "interview";
 
 const TAB_BASE =
   "rounded-t-lg px-4 py-2.5 text-sm font-medium transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-zenodrift-accent focus-visible:ring-offset-2 focus-visible:ring-offset-white";
 
-export default function DocumentPage() {
+function DocumentPageContent() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const id = params.id as string;
   const [tab, setTab] = useState<Tab>("chat");
   const [actionError, setActionError] = useState<string | null>(null);
@@ -44,6 +57,7 @@ export default function DocumentPage() {
     isError,
     error: loadError,
   } = useDocument(id);
+  const { data: resumeStatus, isPending: resumeLoading } = useUserResume();
 
   const deleteMutation = useDeleteDocumentMutation();
 
@@ -53,6 +67,52 @@ export default function DocumentPage() {
 
   const showInterviewPrep =
     doc?.status === "ready" && doc?.doc_domain === "job_description";
+  const hasAccountResume = Boolean(
+    resumeStatus?.has_resume && resumeStatus.document_id
+  );
+  const showAnalyzeFit = showInterviewPrep && hasAccountResume;
+
+  const tabSyncRef = useRef<{ docId: string; tabQuery: string | null } | null>(
+    null
+  );
+
+  useEffect(() => {
+    setTab("chat");
+    tabSyncRef.current = null;
+  }, [id]);
+
+  useEffect(() => {
+    if (!showInterviewPrep || !doc || doc.id !== id) return;
+    if (resumeLoading) return;
+    const tabQuery = searchParams.get("tab");
+    const prev = tabSyncRef.current;
+    if (
+      prev &&
+      prev.docId === doc.id &&
+      prev.tabQuery === tabQuery
+    ) {
+      return;
+    }
+    tabSyncRef.current = { docId: doc.id, tabQuery };
+    const t = (tabQuery || "").toLowerCase();
+    if (t === "fit") {
+      setTab(hasAccountResume ? "fit" : "chat");
+    } else if (t === "interview") setTab("interview");
+    else if (t === "chat" || t === "ask") setTab("chat");
+  }, [
+    id,
+    showInterviewPrep,
+    doc,
+    searchParams,
+    resumeLoading,
+    hasAccountResume,
+  ]);
+
+  useEffect(() => {
+    if (tab === "fit" && !hasAccountResume && !resumeLoading) {
+      setTab("chat");
+    }
+  }, [tab, hasAccountResume, resumeLoading]);
 
   const handleDelete = () => {
     if (!doc || !confirm(`Delete "${doc.filename}"? This cannot be undone.`)) return;
@@ -165,6 +225,22 @@ export default function DocumentPage() {
             >
               Ask
             </button>
+            {showAnalyzeFit && (
+              <button
+                onClick={() => setTab("fit")}
+                role="tab"
+                aria-selected={tab === "fit"}
+                aria-controls="fit-panel"
+                id="fit-tab"
+                className={`${TAB_BASE} -mb-px ${
+                  tab === "fit"
+                    ? "border-b-2 border-zenodrift-accent text-zenodrift-text-strong"
+                    : "border-b-2 border-transparent text-zenodrift-text-muted hover:text-zenodrift-text"
+                }`}
+              >
+                Analyze Fit
+              </button>
+            )}
             {showInterviewPrep && (
               <button
                 onClick={() => setTab("interview")}
@@ -204,6 +280,11 @@ export default function DocumentPage() {
                 <ChatTab documentId={id} />
               </div>
             )}
+            {tab === "fit" && showAnalyzeFit && doc.status === "ready" && (
+              <div id="fit-panel" role="tabpanel" aria-labelledby="fit-tab">
+                <AnalyzeFitTab documentId={id} />
+              </div>
+            )}
             {tab === "interview" && showInterviewPrep && doc && (
               <div
                 id="interview-panel"
@@ -220,6 +301,193 @@ export default function DocumentPage() {
         </div>
       )}
     </GradientShell>
+  );
+}
+
+export default function DocumentPage() {
+  return (
+    <Suspense
+      fallback={
+        <GradientShell>
+          <div className="flex justify-center py-20">
+            <div
+              className="h-10 w-10 animate-spin rounded-full border-2 border-neutral-200 border-t-zenodrift-accent"
+              aria-label="Loading"
+            />
+          </div>
+        </GradientShell>
+      }
+    >
+      <DocumentPageContent />
+    </Suspense>
+  );
+}
+
+function AnalyzeFitTab({ documentId }: { documentId: string }) {
+  const queryClient = useQueryClient();
+  const { data: resume, isPending: resumeLoading } = useUserResume();
+  const [focusQuestion, setFocusQuestion] = useState("");
+  const [fitError, setFitError] = useState<string | null>(null);
+  const fitMutation = useAnalyzeFitMutation(documentId);
+
+  const hasResume = Boolean(resume?.has_resume && resume.document_id);
+  const resumeId = resume?.document_id ?? "";
+
+  const latestQuery = useQuery({
+    queryKey: queryKeys.analyzeFitLatest(documentId, resumeId),
+    queryFn: () => getAnalyzeFitLatest(documentId, resumeId),
+    enabled: hasResume && Boolean(resumeId),
+    staleTime: 0,
+  });
+
+  const saved = latestQuery.data;
+  const displayAnalysis =
+    saved?.has_analysis && saved.analysis ? saved.analysis : null;
+
+  const handleAnalyze = () => {
+    if (!hasResume || fitMutation.isPending) return;
+    setFitError(null);
+    fitMutation.mutate(
+      { question: focusQuestion.trim() || undefined },
+      {
+        onSuccess: (data) => {
+          queryClient.setQueryData(
+            queryKeys.analyzeFitLatest(documentId, resumeId),
+            {
+              has_analysis: true,
+              analysis: data,
+              created_at: new Date().toISOString(),
+              cache_hit_default_question: !focusQuestion.trim(),
+            }
+          );
+        },
+        onError: (err) => {
+          if (err instanceof Error && err.message === "RESUME_REQUIRED") {
+            setFitError(
+              "Add your resume on the dashboard first. We need it to compare you to this job."
+            );
+            return;
+          }
+          setFitError(
+            err instanceof ApiError
+              ? String(err.detail || err.message)
+              : "Could not analyze fit"
+          );
+        },
+      }
+    );
+  };
+
+  const savedLabel =
+    saved?.created_at &&
+    (() => {
+      try {
+        return new Date(saved.created_at).toLocaleString(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        });
+      } catch {
+        return saved.created_at;
+      }
+    })();
+
+  return (
+    <div className="space-y-6 pb-8">
+      <p className="text-sm leading-relaxed text-zenodrift-text">
+        We line this job up with your{" "}
+        <strong>account resume</strong>: what matches, what&apos;s missing, a fit score, and
+        specific tweaks you could make. Your last run stays put until the job or resume changes
+        (no surprise API cost). Hit Refresh after you change something.
+      </p>
+
+      {resumeLoading ? (
+        <p className="text-sm text-zenodrift-text-muted">Checking resume…</p>
+      ) : !hasResume ? (
+        <div
+          className="rounded-xl border border-amber-200/80 bg-amber-50/60 px-4 py-3 text-sm text-amber-950"
+          role="status"
+        >
+          <p className="font-medium text-amber-950">No account resume yet</p>
+          <p className="mt-1 text-amber-900/90">
+            Upload a PDF on the dashboard so we can compare it to this job.
+          </p>
+          <Link
+            href="/dashboard"
+            className="mt-3 inline-block text-sm font-medium text-orange-700 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:rounded"
+          >
+            Go to dashboard →
+          </Link>
+        </div>
+      ) : (
+        <>
+          {latestQuery.isPending && (
+            <p className="text-sm text-zenodrift-text-muted">Loading saved analysis…</p>
+          )}
+          {displayAnalysis && savedLabel && !latestQuery.isPending && (
+            <div
+              className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-4 py-3 text-sm text-zenodrift-text"
+              role="status"
+            >
+              <p className="font-medium text-zenodrift-text-strong">Saved analysis</p>
+              <p className="mt-1 text-xs text-zenodrift-text-muted">
+                From {savedLabel}. Re-running uses tokens only if something changed or you
+                add an optional focus below.
+              </p>
+            </div>
+          )}
+          <div className="space-y-2">
+            <label
+              htmlFor="analyze-fit-focus"
+              className="block text-sm font-medium text-zenodrift-text-strong"
+            >
+              Optional focus{" "}
+              <span className="font-normal text-zenodrift-text-muted">
+                (narrows retrieval; leave blank for a full comparison)
+              </span>
+            </label>
+            <textarea
+              id="analyze-fit-focus"
+              value={focusQuestion}
+              onChange={(e) => setFocusQuestion(e.target.value)}
+              rows={3}
+              disabled={fitMutation.isPending}
+              placeholder="e.g. Emphasize FP&A, budgeting, and executive reporting…"
+              className="w-full rounded-xl border border-slate-200 bg-white/80 px-4 py-3 text-sm text-zenodrift-text shadow-sm ring-1 ring-slate-200/60 placeholder-zenodrift-text-muted focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400/20 disabled:opacity-70"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={handleAnalyze}
+            disabled={fitMutation.isPending}
+            className="rounded-xl bg-slate-900 px-6 py-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 disabled:opacity-50"
+          >
+            {fitMutation.isPending
+              ? "Working…"
+              : displayAnalysis
+                ? "Refresh analysis"
+                : "Analyze fit"}
+          </button>
+        </>
+      )}
+
+      {fitError && (
+        <div
+          className="rounded-xl bg-red-50/80 px-4 py-3 text-sm text-red-700 shadow-sm ring-1 ring-red-200/50"
+          role="alert"
+        >
+          {fitError}
+        </div>
+      )}
+
+      {displayAnalysis && (
+        <section className="border-t border-slate-200/80 pt-6">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zenodrift-text-muted">
+            Analysis
+          </h2>
+          <AnalyzeFitDisplay data={displayAnalysis} />
+        </section>
+      )}
+    </div>
   );
 }
 
@@ -247,6 +515,10 @@ function ChatTab({ documentId }: { documentId: string }) {
     });
   };
 
+  const structuredAnswer = answerData
+    ? parseAskStructuredAnswer(answerData.answer)
+    : null;
+
   return (
     <div className="space-y-6">
       <form onSubmit={handleAsk}>
@@ -255,7 +527,7 @@ function ChatTab({ documentId }: { documentId: string }) {
             type="text"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            placeholder="Ask a question about this document..."
+            placeholder="Try: salary range, must-have skills, day-to-day work, remote policy…"
             disabled={askMutation.isPending}
             className="flex-1 rounded-xl border border-slate-200 bg-white/80 px-4 py-3 text-zenodrift-text-strong shadow-sm ring-1 ring-slate-200/60 placeholder-zenodrift-text-muted transition-colors focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400/20 disabled:opacity-70"
           />
@@ -283,25 +555,29 @@ function ChatTab({ documentId }: { documentId: string }) {
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zenodrift-text-muted">
             Answer
           </h2>
-          <div className="prose prose-slate max-w-none text-zenodrift-text">
-            {answerData.answer.split(/(\[\d+-c\d+\])/g).map((part, i) => {
-              const m = part.match(/^\[(\d+)-c(\d+)\]$/);
-              if (m) {
-                const idx = parseInt(m[2], 10) - 1;
-                const citation = answerData!.citations[idx];
-                return (
-                  <sup
-                    key={i}
-                    className="cursor-help font-medium text-orange-600"
-                    title={citation?.snippet}
-                  >
-                    {part}
-                  </sup>
-                );
-              }
-              return <span key={i}>{part}</span>;
-            })}
-          </div>
+          {structuredAnswer ? (
+            <AskAnswerDisplay data={structuredAnswer} />
+          ) : (
+            <div className="prose prose-slate max-w-none whitespace-pre-wrap text-zenodrift-text">
+              {answerData.answer.split(/(\[\d+-c\d+\])/g).map((part, i) => {
+                const m = part.match(/^\[(\d+)-c(\d+)\]$/);
+                if (m) {
+                  const idx = parseInt(m[2], 10) - 1;
+                  const citation = answerData!.citations[idx];
+                  return (
+                    <sup
+                      key={i}
+                      className="cursor-help font-medium text-orange-600"
+                      title={citation?.snippet}
+                    >
+                      {part}
+                    </sup>
+                  );
+                }
+                return <span key={i}>{part}</span>;
+              })}
+            </div>
+          )}
           {answerData.citations.length > 0 && (
             <div className="mt-6 border-t border-slate-200/80 pt-6">
               <h3 className="mb-2 text-sm font-semibold text-zenodrift-text">

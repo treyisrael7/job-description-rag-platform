@@ -1,0 +1,528 @@
+================================================================================
+INTERVIEWOS / RAG-ASSISTANT — DETAILED REPOSITORY ARCHITECTURE & ORCHESTRATION
+================================================================================
+Generated for deep onboarding: how the monorepo is structured, how data flows,
+and how retrieval, LLM calls, and the interview product fit together.
+
+--------------------------------------------------------------------------------
+1. PRODUCT SUMMARY
+--------------------------------------------------------------------------------
+
+The product (branded "InterviewOS" in README and API titles) is an interview-
+preparation application grounded in real job description (JD) PDFs:
+
+  - Users upload JD PDFs; the system parses, chunks, embeds, and indexes text
+    in PostgreSQL with pgvector for semantic search.
+  - Users can attach an account-level resume (reused across JDs) and optional
+    company notes/URLs per document ("Interview Kit" sources).
+  - Features include: RAG Q&A with citations (/ask), raw hybrid retrieval
+    (/retrieve), structured JD↔resume fit analysis (/analyze-fit), and a full
+    interview practice loop: question generation, answer submission, rubric-
+    based evaluation with evidence from JD/resume chunks.
+  - Auth is Clerk (JWT Bearer) for the Next.js client; optional API "demo mode"
+    uses a fixed sandbox user and x-demo-key header for tools like curl.
+
+--------------------------------------------------------------------------------
+2. MONOREPO LAYOUT
+--------------------------------------------------------------------------------
+
+Root package name: interview-os (package.json). Workspaces:
+
+  apps/web     — Next.js 15 frontend (@interview-os/web)
+  apps/api     — FastAPI backend (Python 3.11+)
+  packages/shared — Minimal TypeScript shared types (currently a small surface)
+
+Also present:
+
+  docker-compose.yml — Postgres (pgvector), API, Web, pgAdmin
+  Makefile           — up/down, migrations, tests, retrieval eval helpers
+  .github/workflows/ci.yml — Backend pytest + Alembic; frontend npm ci + build
+  scripts/           — PowerShell helpers for upload, retrieve, ask, etc.
+  docs/              — e.g. S3 CORS JSON sample
+  apps/api/evals/    — Offline retrieval evaluation package (not imported by prod)
+
+pnpm-workspace.yaml lists apps/* and packages/*; root also uses npm workspaces
+in package.json for scripts like build:web and test:web.
+
+--------------------------------------------------------------------------------
+3. TECHNOLOGY STACK
+--------------------------------------------------------------------------------
+
+Backend (apps/api):
+  - FastAPI, Uvicorn, Pydantic Settings
+  - SQLAlchemy 2 async (asyncpg) + sync URL for some paths if needed
+  - Alembic migrations
+  - pgvector (HNSW index on embeddings; GIN on full-text tsvector)
+  - OpenAI: embeddings (default text-embedding-3-small, 1536 dims) + chat
+    (gpt-4o-mini default "fast", gpt-4o optional "high quality" for some paths)
+  - PyMuPDF (fitz) for PDF text extraction
+  - boto3 for S3 when configured; local filesystem storage otherwise
+  - PyJWT + PyJWKClient for Clerk
+  - Optional Redis for LLM/retrieval caches; in-process fallback
+
+Frontend (apps/web):
+  - Next.js 15, React 19, TypeScript
+  - Clerk (@clerk/nextjs) for sign-in and session JWTs
+  - TanStack React Query for server state
+  - Tailwind CSS, Framer Motion, Lucide, Recharts (analytics)
+
+Database:
+  - PostgreSQL 16 image with pgvector extension (docker-compose / CI)
+
+--------------------------------------------------------------------------------
+4. LOCAL & CONTAINER ORCHESTRATION
+--------------------------------------------------------------------------------
+
+docker-compose.yml defines:
+
+  postgres — pgvector/pgvector:pg16, DB interview_os, port 5432, healthcheck
+  api      — build apps/api/Dockerfile, port 8000, env for DB, OpenAI, S3,
+             Clerk, PDF/chunk limits, embedding model/dim, chunk params,
+             DEMO_MODE_ENABLED, CORS_ORIGINS, etc.
+  web      — build apps/web/Dockerfile; NEXT_PUBLIC_API_BASE_URL points at API
+             (note: mapped 3001:3000 if host 3000 is busy)
+  pgadmin  — optional DB UI on 5050
+
+Typical dev: copy .env from .env.example, set OPENAI_API_KEY, Clerk keys,
+`make up`, then `make db-migrate` for Alembic.
+
+Makefile targets:
+  up / up-verbose / up-minimal (postgres+api only) / up-serial
+  db-migrate — exec alembic inside api container
+  test — ensures postgres up, alembic upgrade, pytest in apps/api
+  test-docker — build api image and run pytest inside one-off container
+  retrieval-eval / retrieval-eval-compare — run apps/api evals.retrieval.entrypoint
+
+--------------------------------------------------------------------------------
+5. CONFIGURATION (app.core.config.Settings)
+--------------------------------------------------------------------------------
+
+Environment is loaded from project root .env and apps/api/.env (API dir can
+override). Notable settings:
+
+  Database: DATABASE_URL (asyncpg), DATABASE_URL_SYNC
+
+  Auth: CLERK_JWKS_URL, optional CLERK_ISSUER; DEMO_MODE_ENABLED + DEMO_KEY +
+        optional DEMO_USER_ID (fixed UUID sandbox user)
+
+  Storage: AWS_REGION, S3_BUCKET, keys — if bucket unset, local storage is used
+
+  Limits: MAX_PDF_MB, MAX_PDF_PAGES, MAX_CHUNKS_PER_DOC, TOP_K_MAX,
+          MAX_COMPLETION_TOKENS, MAX_LLM_BUDGET_TOKENS (aliases supported)
+
+  Retrieval: CHUNK_SIZE/OVERLAP (legacy), MIN_CHUNK_CHARS, TOP_N_CANDIDATES
+             (pool before MMR), MMR_LAMBDA, HYBRID_RETRIEVAL_ENABLED
+
+  OpenAI: OPENAI_API_KEY, embedding model/dim, MODEL_FAST / MODEL_HIGH_QUALITY,
+          USE_HIGH_QUALITY_EVAL, USE_HIGH_QUALITY_FIT_ANALYSIS
+
+  Caching: REDIS_URL; CACHE_TTL_RETRIEVAL_SECONDS, CACHE_TTL_EVALUATION_SECONDS
+
+  Plans/quotas: PLAN_LIMIT_FREE/PRO/ENTERPRISE, DEMO_MONTHLY_EVALUATION_LIMIT
+
+--------------------------------------------------------------------------------
+6. API APPLICATION SHELL (app.main)
+--------------------------------------------------------------------------------
+
+FastAPI app registers:
+
+  CORSMiddleware — allow_credentials=True; origins = localhost 3000/3001 plus
+                   CORS_ORIGINS comma list (cannot use * with credentials)
+  RateLimitMiddleware — in-memory limits per IP + path (see rate_limit.py)
+  DemoGateMiddleware — when demo auth active, non-public routes require either
+                       valid Bearer OR matching x-demo-key; rejects mixing both
+
+Routers included:
+  analyze_fit, fit_history, ask, documents, interview, retrieve, user_resume
+
+Public paths for demo gate: /, /health, /openapi.json, /docs, /redoc
+
+/health runs SELECT 1 against DB and reports clerk_configured.
+
+--------------------------------------------------------------------------------
+7. AUTHENTICATION & AUTHORIZATION
+--------------------------------------------------------------------------------
+
+get_current_user (app.core.auth):
+  - If Authorization: Bearer <token> present: verify JWT via Clerk JWKS (RS256),
+    get_or_create_user_by_clerk_id, commit session
+  - Else if demo mode active and x-demo-key matches: get_or_create_demo_user
+  - Else 401
+
+assert_resource_ownership compares resource.user_id to current_user.id (403).
+
+The Next.js client never sends user_id in API bodies for identity; it only sends
+Clerk Bearer tokens (see apps/web/src/lib/api.ts).
+
+--------------------------------------------------------------------------------
+8. RATE LIMITING
+--------------------------------------------------------------------------------
+
+app.core.rate_limit: in-memory store keyed by IP (comment notes future Redis).
+
+Routes and windows (examples):
+  /ask — 10/hour
+  /analyze-fit — 10/hour
+  /fit-history — 120/hour
+  /retrieve — 60/hour
+  /documents/ingest (per-document pattern) — 3/day
+  /documents/presign — 10/day
+  /documents/confirm — 20/day
+
+429 responses include JSON detail and Retry-After header.
+
+--------------------------------------------------------------------------------
+9. DATA MODELS (HIGH LEVEL)
+--------------------------------------------------------------------------------
+
+users — Clerk id, email, plan, evaluation_usage_month, evaluations_this_month
+        (monthly interview evaluation quota)
+
+documents — user_id, filename, s3_key, status (pending→uploaded→processing→
+            ready/failed), page_count, jd_extraction_json, doc_domain
+            (job_description | general | user_resume, etc.), role_profile JSON,
+            competencies JSON, rubric_json JSON
+
+interview_sources — per-document "kit" sources: jd, resume, company, notes;
+                    chunks link via source_id
+
+document_chunks — document_id, source_id, chunk_index, content, page_number,
+                  section/section_type, quality_score, is_low_signal,
+                  content_hash, skills_detected, doc_domain,
+                  embedding (Vector 1536), search_vector (generated tsvector
+                  english), indexes: HNSW cosine on embedding, GIN on tsvector
+
+interview_sessions — user_id, document_id (JD), mode, difficulty,
+                     role_profile_json, overrides, performance_profile JSON
+
+interview_questions — session_id, type, question, rubric_json (bullets,
+                      must_mention, competency ids, evidence chunk ids, etc.)
+
+interview_answers — question_id, answer_text, score, feedback_summary,
+                    strengths/weaknesses JSON arrays, feedback_json,
+                    evaluation_json snapshot
+
+fit_analyses — cached analyze-fit results keyed by user + JD + resume +
+               query fingerprint + chunk content fingerprints (invalidates on
+               re-ingestion)
+
+Alembic under apps/api/alembic/versions/ evolves this schema.
+
+--------------------------------------------------------------------------------
+10. STORAGE ABSTRACTION
+--------------------------------------------------------------------------------
+
+app.services.storage: StorageBackend with presign, exists, download, delete.
+
+  - S3Storage when bucket/keys configured
+  - Local filesystem under a configured upload directory for dev
+
+Document flow (typical): POST /documents/presign → client PUT PDF → POST
+/documents/confirm → POST /documents/{id}/ingest (background ingestion).
+
+User resume uses /user/resume/presign and confirm with a fixed key pattern
+users/{user_id}/resume.pdf and dedicated ingestion (source_ingestion).
+
+--------------------------------------------------------------------------------
+11. INGESTION PIPELINE (JOB DESCRIPTION AND GENERAL DOCS)
+--------------------------------------------------------------------------------
+
+app.services.ingestion.run_ingestion(document_id):
+
+  1. Load Document row; download PDF bytes from storage
+  2. PyMuPDF extract text per page (capped by MAX_PDF_PAGES)
+  3. normalize_jd_text on full text; detect_doc_domain (job_description vs
+     general) from signals
+  4. If job_description: extract_jd_struct → jd_extraction_json on document;
+     chunk_jd_pages (section-aware JD chunking). Else: chunk_pages (generic)
+  5. infer_role_profile(full_text) → role_profile JSON (domain, seniority,
+     title guess, focus areas, question mix) used later by interview setup
+  6. Batch OpenAI embeddings for all chunk texts; validate counts
+  7. Delete existing DocumentChunk rows for document; ensure InterviewSource
+     row type "jd" exists; insert chunks with metadata and embedding
+  8. Additional steps in file may update competencies, FTS, status=ready
+
+Logging is wired so ingestion INFO appears in Docker logs.
+
+--------------------------------------------------------------------------------
+12. RETRIEVAL ARCHITECTURE — THE CORE RAG ORCHESTRATION
+--------------------------------------------------------------------------------
+
+Public production entry: app.services.retrieval.retrieve_chunks(...)
+
+  - Mode from settings: hybrid if HYBRID_RETRIEVAL_ENABLED else semantic only
+  - top_k capped to min(requested, MAX_RETRIEVAL_CHUNKS) where
+    MAX_RETRIEVAL_CHUNKS = 8 for production LLM-bound paths
+  - When additional_document_ids (e.g. resume) are provided AND production
+    budget is enforced: JD and resume candidates are retrieved in a **split slot
+    allocation** — roughly half the budget for primary doc, half for
+    additional — with reallocation if one side is sparse (merge_mmr helpers)
+
+Lower-level: retrieve_chunks_for_mode(db, document_id, query_embedding, top_k,
+mode, ..., query_text, enforce_production_chunk_budget)
+
+Modes:
+
+  A) semantic — pgvector similarity search (_retrieve_semantic_candidates),
+     then Maximal Marginal Relevance (MMR) over candidates using query_embedding
+     and mmr_lambda (diversity vs relevance)
+
+  B) keyword — PostgreSQL full-text (to_tsquery) via retrieve_chunks_keyword;
+     optional MMR if embedding provided; empty if no query_text
+
+  C) hybrid — run semantic + keyword, merge candidate lists (_merge_retrieval_
+     candidates), dedupe, MMR. If keyword fails (exception), logs warning and
+     falls back to semantic-only. If query_text empty, behaves as semantic.
+
+Supporting modules:
+
+  - embeddings.embed_query — OpenAI embedding for user question
+  - keyword_query.suggest_section_filters — maps question keywords to JD
+    section types (compensation, qualifications, tools, etc.); used by /ask and
+    /retrieve to narrow SQL filters; /ask retries without filter if no hits
+  - keyword_query — normalizes query text; KEYWORD_VARIANT_PATTERNS and
+    tech synonyms expand tsquery for better recall
+  - semantic.py — cosine distance ordering, filters: is_low_signal,
+    section_types, doc_domain, source_types, scope primary/additional for
+    split retrieval
+  - keyword_db.py — parallel FTS path with similar filters
+  - merge_mmr.py — merge scores, slot split, MMR selection, logging
+  - payloads.py — finalize chunk dicts (snippet, document_id, source_type JD/
+    RESUME/OTHER, citations metadata)
+
+Eval tooling calls retrieve_chunks_for_mode with enforce_production_chunk_budget
+False to compare modes at larger top_k without the 8-chunk product cap.
+
+--------------------------------------------------------------------------------
+13. /ask — GROUNDED Q&A ORCHESTRATION
+--------------------------------------------------------------------------------
+
+Router: app.routers.ask
+
+  - Validates document ready and ownership; optional additional_document_ids
+    (resume) all owned and ready
+  - embed_query(question)
+  - retrieve_chunks(..., top_k=min(6, TOP_K_MAX), section filter hints for JD
+    domain, include_low_signal=False)
+  - Retry retrieval without section filter if first pass empty
+  - app.services.qa.generate_grounded_answer — splits chunks into JD vs RESUME,
+    builds labeled excerpts with [p{page}-c{i}] markers, applies
+    token_budget.budget_grounded_qa_prompt to fit MAX_LLM_BUDGET_TOKENS,
+    calls OpenAI chat with JSON response_format, model_fast, temperature 0.2
+  - Returns answer string (JSON text) + parallel citations list from chunks
+
+This is distinct from /analyze-fit: /ask is recruiter-style Q&A JSON; analyze-
+fit is matches/gaps/recommendations with server-side fit_score math.
+
+--------------------------------------------------------------------------------
+14. /retrieve — EXPOSED HYBRID SEARCH
+--------------------------------------------------------------------------------
+
+Returns chunk text, scores, sourceType/sourceTitle, chunkId, optional
+section_type, is_low_signal. Same embedding + retrieve_chunks stack as /ask but
+no LLM summarization — useful for debugging and UIs that show raw context.
+
+--------------------------------------------------------------------------------
+15. /analyze-fit — FIT ANALYSIS + CACHING
+--------------------------------------------------------------------------------
+
+Router loads JD and resume documents, fingerprints chunks (content_hash or hash
+of content), normalizes optional question → query_fingerprint. If a FitAnalysis
+row exists for same user, ids, query fingerprint, and both chunk fingerprints,
+returns cached payload (skips embed, retrieve, LLM).
+
+Otherwise: embed, retrieve_chunks with both docs (higher top_k than /ask),
+compress_chunks in analyze_fit_service, single chat completion with structured
+output, compute_fit_score deterministically from matches/gaps importance and
+confidence, persist FitAnalysis.
+
+--------------------------------------------------------------------------------
+16. /fit-history — READ CACHED ANALYSES
+--------------------------------------------------------------------------------
+
+Lists or fetches prior fit analyses for the user (rate limited generously).
+
+--------------------------------------------------------------------------------
+17. INTERVIEW SUBSYSTEM ORCHESTRATION
+--------------------------------------------------------------------------------
+
+Routers under app.routers.interview (package attaches analytics, generate_evaluate,
+read to shared router prefix /interview).
+
+Generate (POST /interview/generate):
+  - Requires doc_domain=job_description, status=ready
+  - Builds InterviewSession with role_profile from document (or default),
+    optional domain/seniority/question_mix overrides
+  - interview_runtime.generate_questions → app.services.interview.questions.
+    generate_questions — uses competencies from document, role profile, RAG
+    evidence (retrieve_interview_evidence) to produce questions with rubrics
+    (mustMention, whatGoodLooksLike, evidenceChunkIds, etc.)
+  - Persists InterviewQuestion rows
+
+Evaluate (POST /interview/evaluate):
+  - consume_evaluation_quota — row-locks User, resets monthly counter in UTC
+    when month changes, enforces plan limits (demo user has separate high cap)
+  - evaluate_answer_with_retrieval — retrieves JD (+ resume) chunks, may use
+    llm_cache for retrieval pool per session and evaluation dedupe keys
+  - Scoring helpers: rubric dimension mean, score_breakdown, feedback_summary
+  - Updates InterviewAnswer; computes performance_profile aggregates
+    (performance_profile.compute_performance_profile, profile_answer_from_
+    feedback) on session for adaptive behavior
+
+Read routes: fetch sessions, questions, answers for UI.
+
+Analytics route: dashboard aggregates.
+
+Adaptive engine (app.services.adaptive_engine):
+  - select_next_question_type(performance_profile) uses thresholds on technical,
+    behavioral, communication scores; weak dimensions bias next question type;
+    if all strong, "hard" questions
+  - adaptive_focus_label for deterministic UI labels
+
+Evidence module (interview.evidence): normalize_evaluation_evidence,
+get_user_resume_document_id, retrieve_interview_evidence — ties rubric evidence
+to chunk retrieval.
+
+--------------------------------------------------------------------------------
+18. DOCUMENTS ROUTER — BEYOND INGESTION
+--------------------------------------------------------------------------------
+
+documents.py includes listing documents with role profile, competency coverage
+from SQL aggregation over interview answers, gap analysis generation, library
+modal support, reingest, delete, presign/confirm, etc. (large file; central to
+dashboard and document detail pages).
+
+--------------------------------------------------------------------------------
+19. USER RESUME
+--------------------------------------------------------------------------------
+
+user_resume.py: single resume per user (doc_domain user_resume), fixed S3 key,
+ingest_resume_pdf via source_ingestion — creates/updates resume InterviewSource
+and chunks so retrieval can include RESUME alongside JD.
+
+--------------------------------------------------------------------------------
+20. LLM CACHING (app.core.llm_cache)
+--------------------------------------------------------------------------------
+
+Optional Redis (REDIS_URL); else thread-safe in-memory TTL dict.
+
+Caches:
+  - Retrieval keyed by document_id + hash(question)
+  - Session JD pool keyed by session_id (reuse top-K JD chunks across questions)
+  - Evaluation keyed by document + question + answer + rubric fingerprint
+
+TTL from settings; session pool has short process-local fallback when retrieval
+TTL is 0.
+
+--------------------------------------------------------------------------------
+21. TOKEN BUDGETING (app.services.token_budget)
+--------------------------------------------------------------------------------
+
+Character-based token estimates (~4 chars/token) with safety slack. Used to trim
+snippets and drop low-scoring chunks so system+user+completion fits
+MAX_LLM_BUDGET_TOKENS. analyze_fit_service has its own excerpt compression and
+budget constants.
+
+--------------------------------------------------------------------------------
+22. FRONTEND ARCHITECTURE
+--------------------------------------------------------------------------------
+
+Entry: apps/web/src/app/
+
+  page.tsx — landing; signed-in users redirect to /dashboard
+  layout.tsx — global layout, providers
+  sign-in / sign-up — Clerk catch-all routes
+  dashboard/page.tsx — main hub (documents, resume section)
+  dashboard/analytics/page.tsx — interview analytics charts
+  documents/[id]/page.tsx — document detail, ask, library, etc.
+  interview/setup/[id]/page.tsx — session setup for a JD
+  interview/session/[sessionId]/page.tsx — live interview UI
+
+lib/api.ts — fetch helpers with getAuthHeaders() (Clerk JWT), types mirroring
+API DTOs, PresignResponse, AskResponse, document CRUD, interview endpoints.
+
+hooks/* — use-documents, use-ask-question, use-interview-session, use-interview-
+evaluate, use-interview-analytics, use-user-resume, etc.
+
+providers/QueryProvider.tsx — React Query client
+
+components/* — InterviewSessionView, SetupPanel, EvaluationDrawer,
+ReferenceDrawer, dashboard sections, AppHeader, etc.
+
+Environment: NEXT_PUBLIC_API_BASE_URL, Clerk publishable key (ClerkProvider in
+layout).
+
+--------------------------------------------------------------------------------
+23. SHARED PACKAGE
+--------------------------------------------------------------------------------
+
+packages/shared — minimal export (e.g. HealthResponse). Workspace dependency
+from web can grow for shared DTOs; currently small.
+
+--------------------------------------------------------------------------------
+24. TESTING
+--------------------------------------------------------------------------------
+
+apps/api/tests — pytest with async DB fixtures (conftest.py), broad coverage:
+retrieval modes, hybrid merge, ask, interview scoring/evaluation, analyze-fit,
+fit cache, token budget, auth edge cases, rate limits, etc.
+
+apps/web — vitest run
+
+CI: Postgres service, alembic upgrade head, pytest; Node 22, npm ci, next build.
+
+--------------------------------------------------------------------------------
+25. EVALS (OFFLINE RETRIEVAL)
+--------------------------------------------------------------------------------
+
+apps/api/evals/retrieval — JSON datasets under cases/, runner compares hybrid/
+semantic/keyword against expected substrings, section types, source types.
+Invoked via Makefile retrieval-eval targets; not wired into FastAPI.
+
+--------------------------------------------------------------------------------
+26. SCRIPTS & OPS EXTRAS
+--------------------------------------------------------------------------------
+
+scripts/*.ps1 — Windows-oriented testing flows for upload, retrieve, ask.
+
+docs/s3-cors-config.json — reference for browser PUT to presigned URLs.
+
+--------------------------------------------------------------------------------
+27. END-TO-END DATA FLOW (TYPICAL USER)
+--------------------------------------------------------------------------------
+
+1) User signs in with Clerk; frontend obtains session JWT.
+2) User presigns JD PDF, uploads, confirms; backend marks document processing and
+   run_ingestion builds chunks + embeddings + role_profile + competencies.
+3) User uploads account resume (optional); same pattern with user resume pipeline.
+4) User opens interview setup: POST /interview/generate creates session and
+   questions grounded in JD (+ resume evidence).
+5) User answers: POST /interview/evaluate runs retrieval + LLM evaluation,
+   enforces monthly quota, updates performance_profile for adaptivity.
+6) User may use /ask for ad-hoc Q&A or /analyze-fit for structured fit report
+   (cached when inputs unchanged).
+
+--------------------------------------------------------------------------------
+28. FILES AND MODULES WORTH BOOKMARKING
+--------------------------------------------------------------------------------
+
+  apps/api/app/main.py                    — app assembly, middleware order
+  apps/api/app/core/config.py             — all env-tunable behavior
+  apps/api/app/core/auth.py               — Clerk + demo user resolution
+  apps/api/app/core/rate_limit.py         — throttle table
+  apps/api/app/core/llm_cache.py          — Redis/memory caches
+  apps/api/app/services/ingestion.py      — PDF → chunks → embeddings
+  apps/api/app/services/retrieval/
+    orchestration.py                      — hybrid/semantic/keyword + prod caps
+    merge_mmr.py                          — merge + MMR + JD/resume slots
+    semantic.py, keyword_db.py            — DB retrieval implementations
+  apps/api/app/services/qa.py             — /ask LLM prompt and JSON handling
+  apps/api/app/services/analyze_fit_service.py — fit analysis + scoring
+  apps/api/app/services/interview/        — questions, evaluation, evidence
+  apps/api/app/routers/*.py               — HTTP surface area
+  apps/web/src/lib/api.ts                 — authenticated client
+  docker-compose.yml, Makefile            — how services are run together
+
+================================================================================
+END OF DOCUMENT
+================================================================================

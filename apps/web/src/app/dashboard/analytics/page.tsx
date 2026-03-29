@@ -56,12 +56,12 @@ function buildInsights(data: {
     } else if (pct < -0.5) {
       items.push({
         icon: "down",
-        text: `Your last session averaged ${Math.abs(pct)}% lower than the one before—normal variance; steady reps add up.`,
+        text: `Your last session averaged ${Math.abs(pct)}% lower than the one before. That happens; keep practicing and it adds up.`,
       });
     } else {
       items.push({
         icon: "flat",
-        text: "You are holding steady session over session.",
+        text: "You're holding steady from one session to the next.",
       });
     }
   }
@@ -90,7 +90,7 @@ function InsightIcon({ kind }: { kind: "up" | "down" | "flat" | "light" }) {
         className={`${cls} flex items-center justify-center text-zenodrift-text-muted`}
         aria-hidden
       >
-        —
+        ≈
       </span>
     );
   }
@@ -168,7 +168,7 @@ export default function InterviewAnalyticsPage() {
                     <p className="mt-2 text-3xl font-bold tabular-nums text-zenodrift-text-strong">
                       {data.overall_average_score != null
                         ? `${data.overall_average_score}`
-                        : "—"}
+                        : "n/a"}
                       {data.overall_average_score != null && (
                         <span className="ml-1 text-lg font-semibold text-zenodrift-text-muted">
                           / 100

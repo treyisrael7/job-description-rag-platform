@@ -10,7 +10,7 @@ from app.services.qa import QA_TEMPERATURE, generate_grounded_answer
 
 def test_generate_grounded_answer_empty_chunks():
     answer, cites = generate_grounded_answer("q?", [])
-    assert "don't have enough information" in answer.lower()
+    assert "could not find enough" in answer.lower()
     assert cites == []
 
 
@@ -65,7 +65,7 @@ def test_generate_grounded_answer_json_and_temperature(monkeypatch):
     assert captured.get("temperature") == QA_TEMPERATURE
     assert captured.get("response_format") == {"type": "json_object"}
     sys_msg = captured["messages"][0]["content"]
-    assert "AI recruiter" in sys_msg
+    assert "strict hiring analyst" in sys_msg.lower()
     assert "Job description excerpts" in captured["messages"][1]["content"]
     assert "Candidate resume excerpts" in captured["messages"][1]["content"]
 

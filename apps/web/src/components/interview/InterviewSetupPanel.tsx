@@ -214,7 +214,7 @@ export function InterviewSetupPanel({
               <span
                 key={chip.id}
                 className="rounded-md bg-white/60 px-2.5 py-1 text-xs font-medium text-zenodrift-text"
-                title={chip.attempts > 0 ? `Attempts: ${chip.attempts}, Avg: ${chip.avgScore ?? "—"}` : undefined}
+                title={chip.attempts > 0 ? `Attempts: ${chip.attempts}, avg: ${chip.avgScore ?? "n/a"}` : undefined}
               >
                 {chip.label}
               </span>
@@ -347,7 +347,7 @@ export function InterviewSetupPanel({
 
             {sources.length > 0 && (
               <p className="text-xs text-zenodrift-text-muted">
-                {sources.map((s) => `${s.title} (${s.source_type})`).join(" • ")} — used for tailored feedback
+                {sources.map((s) => `${s.title} (${s.source_type})`).join(" • ")}. We use these for tailored feedback.
               </p>
             )}
           </div>

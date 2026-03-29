@@ -121,7 +121,7 @@ async def test_ask_no_chunks_returns_fallback(client, demo_key_off, monkeypatch,
     assert resp.status_code == 200
     data = resp.json()
     assert "answer" in data
-    assert "I don't have enough information" in data["answer"]
+    assert "could not find enough" in data["answer"]
     assert data["citations"] == []
 
 

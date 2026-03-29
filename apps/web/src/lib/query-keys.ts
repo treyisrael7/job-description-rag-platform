@@ -8,4 +8,6 @@ export const queryKeys = {
   documentSources: (documentId: string) =>
     ["document", documentId, "sources"] as const,
   userResume: () => ["userResume"] as const,
+  analyzeFitLatest: (jobDescriptionId: string, resumeId: string) =>
+    ["analyzeFitLatest", jobDescriptionId, resumeId] as const,
 };

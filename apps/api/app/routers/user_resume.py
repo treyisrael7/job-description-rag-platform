@@ -1,5 +1,6 @@
 """User-level resume: one resume per account, used across all job descriptions."""
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -7,11 +8,19 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user
+from app.core.auth import assert_resource_ownership, get_current_user
+from app.core.config import settings
 from app.db.session import get_db
 from app.models import Document, InterviewSource, User
+from app.routers.ask import AskOutput, Citation
+from app.services.qa import generate_resume_improvement_answer
+from app.services.retrieval import embed_query, retrieve_chunks
 from app.services.source_ingestion import ingest_resume_pdf
 from app.services.storage import get_storage
+
+logger = logging.getLogger(__name__)
+
+RESUME_COACH_TOP_K = 8
 
 router = APIRouter(prefix="/user", tags=["user"])
 
@@ -48,6 +57,10 @@ class ConfirmInput(BaseModel):
     s3_key: str
 
 
+class ResumeAskInput(BaseModel):
+    question: str = Field(..., min_length=1)
+
+
 @router.get("/resume")
 async def get_resume_status(
     current_user: User = Depends(get_current_user),
@@ -61,7 +74,11 @@ async def get_resume_status(
         )
     )
     doc = result.scalar_one_or_none()
-    return {"has_resume": doc is not None, "filename": doc.filename if doc else None}
+    return {
+        "has_resume": doc is not None,
+        "filename": doc.filename if doc else None,
+        "document_id": str(doc.id) if doc else None,
+    }
 
 
 @router.post("/resume/presign", response_model=PresignOutput)
@@ -136,9 +153,19 @@ async def confirm_user_resume(
             original_filename=USER_RESUME_FILENAME,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        msg = str(e)
+        result = await db.execute(select(Document).where(Document.id == document_id))
+        failed_doc = result.scalar_one_or_none()
+        if failed_doc:
+            failed_doc.status = "failed"
+            failed_doc.error_message = msg[:2000]
+            await db.commit()
+        raise HTTPException(status_code=400, detail=msg)
 
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    doc = result.scalar_one()
     doc.status = "ready"
+    doc.error_message = None
     await db.commit()
     return {"source_id": source_id, "status": "ingested", "document_id": str(document_id)}
 
@@ -162,3 +189,91 @@ async def delete_user_resume(
     await db.delete(doc)
     await db.commit()
     return {"status": "deleted"}
+
+
+@router.post("/resume/ask", response_model=AskOutput)
+async def ask_profile_resume(
+    body: ResumeAskInput,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Resume improvement Q&A over the account resume. Same response envelope as POST /ask;
+    ``answer`` is coaching JSON.
+    """
+    result = await db.execute(
+        select(Document).where(
+            Document.user_id == current_user.id,
+            Document.doc_domain == USER_RESUME_DOC_DOMAIN,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(
+            status_code=400,
+            detail="No profile resume on file yet. Upload one from the dashboard first.",
+        )
+    assert_resource_ownership(doc, current_user)
+
+    if doc.status != "ready":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Your resume is still processing or failed (status: {doc.status}). Try again when it shows as ready.",
+        )
+
+    if not settings.openai_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="OpenAI API not configured; set OPENAI_API_KEY",
+        )
+
+    try:
+        query_embedding = embed_query(body.question)
+    except Exception as e:
+        logger.exception("embed_query failed (resume coach)")
+        raise HTTPException(status_code=503, detail=f"Embedding failed: {str(e)[:200]}")
+
+    doc_domain = doc.doc_domain or None
+
+    try:
+        chunks = await retrieve_chunks(
+            db=db,
+            document_id=doc.id,
+            query_embedding=query_embedding,
+            query_text=body.question,
+            top_k=min(RESUME_COACH_TOP_K, settings.top_k_max),
+            include_low_signal=False,
+            section_types=None,
+            doc_domain=doc_domain,
+            additional_document_ids=None,
+        )
+        if not chunks and doc_domain:
+            chunks = await retrieve_chunks(
+                db=db,
+                document_id=doc.id,
+                query_embedding=query_embedding,
+                query_text=body.question,
+                top_k=min(RESUME_COACH_TOP_K, settings.top_k_max),
+                include_low_signal=False,
+                section_types=None,
+                doc_domain=None,
+                additional_document_ids=None,
+            )
+    except Exception as e:
+        logger.exception("retrieve_chunks failed (resume coach)")
+        raise HTTPException(status_code=503, detail=f"Retrieval failed: {str(e)[:200]}")
+
+    try:
+        answer, citations = generate_resume_improvement_answer(
+            question=body.question,
+            chunks=chunks,
+            max_tokens=settings.max_completion_tokens,
+        )
+    except Exception as e:
+        logger.exception("generate_resume_improvement_answer failed")
+        raise HTTPException(status_code=503, detail=f"Q&A failed: {str(e)[:200]}")
+
+    return AskOutput(
+        answer=answer,
+        citations=[Citation(**c) for c in citations],
+    )

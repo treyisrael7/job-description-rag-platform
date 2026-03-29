@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import type { DocumentSummary } from "@/lib/api";
 import { useDocuments } from "@/hooks/use-documents";
+import { useUserResume } from "@/hooks/use-user-resume";
 
 const STATUS_LABELS: Record<string, string> = {
   pending: "Pending",
@@ -60,14 +61,24 @@ export function LibraryModal({ isOpen, onClose }: LibraryModalProps) {
     enabled: isOpen,
     refetchOnMount: "always",
   });
+  const { data: resumeStatus } = useUserResume();
 
   const isInterviewMode = pathname?.startsWith("/interview/") ?? false;
 
+  const libraryDocs = useMemo(() => {
+    const rid = resumeStatus?.document_id?.trim();
+    return docs.filter((d) => {
+      if (rid && d.id === rid) return false;
+      if (d.doc_domain === "user_resume") return false;
+      return true;
+    });
+  }, [docs, resumeStatus?.document_id]);
+
   const filteredDocs = useMemo(() => {
-    if (!search.trim()) return docs;
+    if (!search.trim()) return libraryDocs;
     const q = search.trim().toLowerCase();
-    return docs.filter((d) => d.filename.toLowerCase().includes(q));
-  }, [docs, search]);
+    return libraryDocs.filter((d) => d.filename.toLowerCase().includes(q));
+  }, [libraryDocs, search]);
 
   useEffect(() => {
     if (isOpen) {
@@ -190,7 +201,7 @@ export function LibraryModal({ isOpen, onClose }: LibraryModalProps) {
             >
               <div className="flex shrink-0 items-center justify-between px-6 py-5">
                 <h2 id="library-modal-title" className="text-xl font-semibold text-zenodrift-text-strong">
-                  Your Documents
+                  Job descriptions
                 </h2>
                 <button
                   onClick={onClose}
@@ -223,7 +234,9 @@ export function LibraryModal({ isOpen, onClose }: LibraryModalProps) {
                   </div>
                 ) : filteredDocs.length === 0 ? (
                   <p className="py-8 text-center text-sm text-zenodrift-text-muted">
-                    {search.trim() ? "No documents match your search." : "No documents yet."}
+                    {search.trim()
+                      ? "No job descriptions match your search."
+                      : "No job descriptions yet."}
                   </p>
                 ) : (
                   <ul className="space-y-3">

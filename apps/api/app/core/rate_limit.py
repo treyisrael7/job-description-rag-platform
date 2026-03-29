@@ -30,8 +30,12 @@ def _path_to_route(path: str) -> RouteKey | None:
     path = path.rstrip("/") or "/"
     if path == "/ask":
         return "ask"
+    if path == "/user/resume/ask":
+        return "ask"
     if path == "/analyze-fit":
         return "analyze-fit"
+    if path == "/analyze-fit/latest":
+        return "fit-history"
     if path == "/fit-history":
         return "fit-history"
     if path == "/retrieve":

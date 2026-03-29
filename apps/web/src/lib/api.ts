@@ -82,6 +82,80 @@ export interface AskResponse {
   }>;
 }
 
+/** Parsed body when /ask returns structured JSON (see generate_grounded_answer). */
+export interface AskFitMatch {
+  requirement: string;
+  candidate_experience: string;
+  alignment_notes: string;
+}
+
+export interface AskFitGap {
+  requirement: string;
+  reason: string;
+}
+
+export interface AskStructuredAnswer {
+  key_job_requirements: string[];
+  matches: AskFitMatch[];
+  gaps: AskFitGap[];
+  fit_score: number;
+  reasoning: string;
+}
+
+/**
+ * If ``answer`` is JSON from the grounded Q&A endpoint, return a typed object for UI.
+ * Otherwise returns null (show plain text fallback).
+ */
+export function parseAskStructuredAnswer(answer: string): AskStructuredAnswer | null {
+  const trimmed = answer?.trim() ?? "";
+  if (!trimmed.startsWith("{")) return null;
+  try {
+    const raw = JSON.parse(trimmed) as unknown;
+    if (!raw || typeof raw !== "object") return null;
+    const o = raw as Record<string, unknown>;
+    const reqs = o.key_job_requirements;
+    const matches = o.matches;
+    const gaps = o.gaps;
+    const fit = o.fit_score;
+    const reasoning = o.reasoning;
+    if (!Array.isArray(reqs) || !Array.isArray(matches) || !Array.isArray(gaps))
+      return null;
+    const fitNum = typeof fit === "number" ? fit : Number(fit);
+    if (!Number.isFinite(fitNum) || typeof reasoning !== "string") return null;
+    const key_job_requirements = reqs.filter((x): x is string => typeof x === "string");
+    const matchList: AskFitMatch[] = [];
+    for (const x of matches) {
+      if (!x || typeof x !== "object") continue;
+      const m = x as Record<string, unknown>;
+      if (typeof m.requirement !== "string" || typeof m.candidate_experience !== "string")
+        continue;
+      matchList.push({
+        requirement: m.requirement,
+        candidate_experience: m.candidate_experience,
+        alignment_notes:
+          typeof m.alignment_notes === "string" ? m.alignment_notes : "",
+      });
+    }
+    const gapList: AskFitGap[] = [];
+    for (const x of gaps) {
+      if (!x || typeof x !== "object") continue;
+      const g = x as Record<string, unknown>;
+      if (typeof g.requirement !== "string" || typeof g.reason !== "string") continue;
+      gapList.push({ requirement: g.requirement, reason: g.reason });
+    }
+    const fit_score = Math.min(100, Math.max(0, Math.round(fitNum)));
+    return {
+      key_job_requirements,
+      matches: matchList,
+      gaps: gapList,
+      fit_score,
+      reasoning,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -265,6 +339,8 @@ export async function ingestResume(
 export interface UserResumeStatus {
   has_resume: boolean;
   filename?: string | null;
+  /** Present when ``has_resume``; use with /ask ``additional_document_ids``. */
+  document_id?: string | null;
 }
 
 export async function getUserResume(): Promise<UserResumeStatus> {
@@ -305,6 +381,70 @@ export async function deleteUserResume(): Promise<{ status: string; message?: st
   return handleResponse<{ status: string; message?: string }>(res);
 }
 
+/** POST /user/resume/ask: resume improvement coaching from profile resume text. */
+export async function askProfileResumeCoach(question: string): Promise<AskResponse> {
+  const res = await fetch(`${API_BASE}/user/resume/ask`, {
+    method: "POST",
+    headers: await getAuthHeaders(),
+    body: JSON.stringify({ question }),
+  });
+  return handleResponse<AskResponse>(res);
+}
+
+export interface ResumeCoachEdit {
+  focus: string;
+  observation: string;
+  suggestion: string;
+}
+
+export interface ResumeCoachStructuredAnswer {
+  coaching_reply: string;
+  prioritized_edits: ResumeCoachEdit[];
+  strengths_to_keep: string[];
+  reasoning: string;
+}
+
+export function parseResumeCoachAnswer(answer: string): ResumeCoachStructuredAnswer | null {
+  const trimmed = answer?.trim() ?? "";
+  if (!trimmed.startsWith("{")) return null;
+  try {
+    const raw = JSON.parse(trimmed) as unknown;
+    if (!raw || typeof raw !== "object") return null;
+    const o = raw as Record<string, unknown>;
+    const reply = o.coaching_reply;
+    const edits = o.prioritized_edits;
+    const strengths = o.strengths_to_keep;
+    const reasoning = o.reasoning;
+    if (typeof reply !== "string" || typeof reasoning !== "string") return null;
+    if (!Array.isArray(edits) || !Array.isArray(strengths)) return null;
+    const prioritized_edits: ResumeCoachEdit[] = [];
+    for (const x of edits) {
+      if (!x || typeof x !== "object") continue;
+      const e = x as Record<string, unknown>;
+      if (
+        typeof e.focus !== "string" ||
+        typeof e.observation !== "string" ||
+        typeof e.suggestion !== "string"
+      )
+        continue;
+      prioritized_edits.push({
+        focus: e.focus,
+        observation: e.observation,
+        suggestion: e.suggestion,
+      });
+    }
+    const strengths_to_keep = strengths.filter((x): x is string => typeof x === "string");
+    return {
+      coaching_reply: reply,
+      prioritized_edits,
+      strengths_to_keep,
+      reasoning,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function addSourceFromUrl(
   documentId: string,
   url: string,
@@ -323,14 +463,90 @@ export async function addSourceFromUrl(
 
 export async function ask(
   documentId: string,
-  question: string
+  question: string,
+  options?: { resumeDocumentId?: string | null }
 ): Promise<AskResponse> {
+  const body: Record<string, unknown> = { document_id: documentId, question };
+  const rid = options?.resumeDocumentId?.trim();
+  if (rid) {
+    body.additional_document_ids = [rid];
+  }
   const res = await fetch(`${API_BASE}/ask`, {
     method: "POST",
     headers: await getAuthHeaders(),
-    body: JSON.stringify({ document_id: documentId, question }),
+    body: JSON.stringify(body),
   });
   return handleResponse<AskResponse>(res);
+}
+
+// --- Analyze fit (JD + account resume) ---
+
+export interface AnalyzeFitMatch {
+  requirement: string;
+  resume_evidence: string;
+  confidence: number;
+  importance: string;
+}
+
+export interface AnalyzeFitGap {
+  requirement: string;
+  reason: string;
+  importance: string;
+}
+
+export interface AnalyzeFitRecommendation {
+  gap: string;
+  suggestion: string;
+  example_resume_line: string;
+}
+
+export interface AnalyzeFitResult {
+  matches: AnalyzeFitMatch[];
+  gaps: AnalyzeFitGap[];
+  fit_score: number;
+  summary: string;
+  recommendations: AnalyzeFitRecommendation[];
+}
+
+export interface AnalyzeFitLatestPayload {
+  has_analysis: boolean;
+  analysis: AnalyzeFitResult | null;
+  created_at: string | null;
+  cache_hit_default_question: boolean;
+}
+
+export async function getAnalyzeFitLatest(
+  jobDescriptionId: string,
+  resumeId: string
+): Promise<AnalyzeFitLatestPayload> {
+  const params = new URLSearchParams({
+    job_description_id: jobDescriptionId,
+    resume_id: resumeId,
+  });
+  const res = await fetch(`${API_BASE}/analyze-fit/latest?${params}`, {
+    headers: await getAuthHeaders(),
+  });
+  return handleResponse<AnalyzeFitLatestPayload>(res);
+}
+
+export async function analyzeFit(params: {
+  jobDescriptionId: string;
+  resumeId: string;
+  question?: string | null;
+}): Promise<AnalyzeFitResult> {
+  const body: Record<string, unknown> = {
+    job_description_id: params.jobDescriptionId,
+    resume_id: params.resumeId,
+  };
+  const q = params.question?.trim();
+  if (q) body.question = q;
+
+  const res = await fetch(`${API_BASE}/analyze-fit`, {
+    method: "POST",
+    headers: await getAuthHeaders(),
+    body: JSON.stringify(body),
+  });
+  return handleResponse<AnalyzeFitResult>(res);
 }
 
 // --- Interview Prep API ---

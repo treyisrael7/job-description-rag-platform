@@ -19,8 +19,10 @@ from app.models.document_chunk import DocumentChunk
 from app.models.fit_analysis import FitAnalysis
 
 DEFAULT_ANALYZE_FIT_QUESTION = (
-    "Compare job requirements, qualifications, skills, and responsibilities "
-    "to the candidate's resume experience and evidence."
+    "Compare job requirements, qualifications, skills, responsibilities, and "
+    "education or degree requirements to the candidate's full resume: work history, "
+    "education (degrees, majors, minors, university, graduation), skills, certifications, "
+    "and other evidence."
 )
 
 

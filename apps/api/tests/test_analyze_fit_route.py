@@ -20,9 +20,17 @@ def test_rate_limit_maps_analyze_fit_path():
     assert "analyze-fit" in RATE_LIMITS
 
 
+def test_rate_limit_maps_analyze_fit_latest_path():
+    assert _path_to_route("/analyze-fit/latest") == "fit-history"
+
+
 def test_rate_limit_maps_fit_history_path():
     assert _path_to_route("/fit-history") == "fit-history"
     assert "fit-history" in RATE_LIMITS
+
+
+def test_rate_limit_maps_user_resume_ask_path():
+    assert _path_to_route("/user/resume/ask") == "ask"
 
 
 def test_analyze_fit_request_accepts_string_uuids_and_optional_question():

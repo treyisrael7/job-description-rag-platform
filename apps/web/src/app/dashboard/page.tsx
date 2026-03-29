@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useLibrary } from "@/contexts/LibraryContext";
@@ -15,6 +15,7 @@ import {
   useDeleteAllDocumentsMutation,
 } from "@/hooks/use-documents";
 import { AccountResumeSection } from "@/components/dashboard/AccountResumeSection";
+import { useUserResume } from "@/hooks/use-user-resume";
 
 const STATUS_LABELS: Record<string, string> = {
   pending: "Pending",
@@ -74,6 +75,21 @@ export default function DashboardPage() {
     isError: documentsQueryError,
     error: documentsError,
   } = useDocuments();
+  const { data: resumeStatus } = useUserResume();
+  const canAnalyzeFit = Boolean(
+    resumeStatus?.has_resume && resumeStatus.document_id
+  );
+
+  /** Hide profile resume (by id or domain) so it never shows as a job row. */
+  const jobDescriptionDocs = useMemo(() => {
+    const rid = resumeStatus?.document_id?.trim();
+    return docs.filter((d) => {
+      if (rid && d.id === rid) return false;
+      if (d.doc_domain === "user_resume") return false;
+      return true;
+    });
+  }, [docs, resumeStatus?.document_id]);
+
   const [error, setError] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -156,7 +172,12 @@ export default function DashboardPage() {
   };
 
   const handleClearAll = () => {
-    if (!confirm(`Delete all ${docs.length} documents? This cannot be undone.`)) return;
+    if (
+      !confirm(
+        `Delete all ${jobDescriptionDocs.length} job description${jobDescriptionDocs.length === 1 ? "" : "s"}? Your profile resume stays put. This cannot be undone.`
+      )
+    )
+      return;
     setError(null);
     deleteAllMutation.mutate(undefined, {
       onError: (e) => {
@@ -279,20 +300,25 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Dashboard card: Account Resume + Recent Documents */}
+      {/* Dashboard card: profile resume + job descriptions */}
       <section className="dashboard-card px-6 py-6">
         <AccountResumeSection />
-        <div className="mb-3 mt-4 flex items-center justify-between">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-zenodrift-text-muted">
-            Recent Documents
-          </h2>
-          {docs.length > 0 && (
+        <div className="mb-3 mt-8 flex items-center justify-between">
+          <div>
+            <h2 className="text-xs font-medium uppercase tracking-wider text-zenodrift-text-muted">
+              Job descriptions
+            </h2>
+            <p className="mt-1 text-xs text-zenodrift-text-muted">
+              Upload roles here. The profile resume above goes with every job you add.
+            </p>
+          </div>
+          {jobDescriptionDocs.length > 0 && (
             <button
               onClick={handleClearAll}
               disabled={deleteAllMutation.isPending}
-              className="text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
+              className="shrink-0 text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
             >
-              {deleteAllMutation.isPending ? "Clearing…" : "Clear all"}
+              {deleteAllMutation.isPending ? "Clearing…" : "Clear all JDs"}
             </button>
           )}
         </div>
@@ -303,13 +329,13 @@ export default function DashboardPage() {
               aria-label="Loading documents"
             />
           </div>
-        ) : docs.length === 0 ? (
+        ) : jobDescriptionDocs.length === 0 ? (
           <p className="py-6 text-center text-sm text-zenodrift-text-muted">
-            No documents yet. Upload a job description PDF above to get started.
+            No job descriptions yet. Upload a JD PDF in the area above to get started.
           </p>
         ) : (
           <ul className="divide-y divide-neutral-100">
-            {docs.map((doc) => (
+            {jobDescriptionDocs.map((doc) => (
               <li
                 key={doc.id}
                 className="flex flex-col gap-2 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
@@ -373,7 +399,7 @@ export default function DashboardPage() {
                             <span
                               key={c.id}
                               className="rounded-md bg-white/25 px-2 py-0.5 text-xs font-medium text-zenodrift-text"
-                              title={c.attempts_count > 0 ? `Attempts: ${c.attempts_count}, Avg: ${c.avg_score ?? "—"}` : undefined}
+                              title={c.attempts_count > 0 ? `Attempts: ${c.attempts_count}, avg: ${c.avg_score ?? "n/a"}` : undefined}
                             >
                               {c.label}
                             </span>
@@ -424,12 +450,14 @@ export default function DashboardPage() {
                           >
                             Start Interview
                           </Link>
-                          <Link
-                            href={`/documents/${doc.id}`}
-                            className="inline-flex items-center rounded-lg bg-neutral-100 px-3 py-2 text-sm font-medium text-zenodrift-text transition-all duration-200 hover:bg-neutral-200 focus:outline-none focus:ring-2 focus:ring-neutral-300 focus:ring-offset-2"
-                          >
-                            Ask
-                          </Link>
+                          {canAnalyzeFit && (
+                            <Link
+                              href={`/documents/${doc.id}?tab=fit`}
+                              className="inline-flex items-center rounded-lg bg-neutral-100 px-3 py-2 text-sm font-medium text-zenodrift-text transition-all duration-200 hover:bg-neutral-200 focus:outline-none focus:ring-2 focus:ring-neutral-300 focus:ring-offset-2"
+                            >
+                              Analyze fit
+                            </Link>
+                          )}
                         </>
                       ) : (
                         <Link

@@ -14,6 +14,7 @@ from app.services.jd_chunking import chunk_jd_pages
 from app.services.jd_extraction import extract_jd_struct
 from app.services.jd_sections import normalize_jd_text
 from app.services.role_intelligence import infer_role_profile
+from app.services.pdf_pages import pdf_page_count
 from app.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,16 @@ async def run_ingestion(document_id: uuid.UUID) -> None:
 
             storage = get_storage()
             pdf_bytes = storage.download(doc.s3_key)
+
+            total_pages = pdf_page_count(pdf_bytes)
+            if total_pages > settings.max_pdf_pages:
+                doc.status = "failed"
+                doc.error_message = (
+                    f"PDF has {total_pages} pages; maximum allowed is {settings.max_pdf_pages}. "
+                    "Please upload a shorter document."
+                )
+                await db.commit()
+                return
 
             page_texts = _extract_text_per_page(pdf_bytes)
             if not page_texts:
