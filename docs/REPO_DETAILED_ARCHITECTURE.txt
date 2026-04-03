@@ -38,11 +38,10 @@ Also present:
   Makefile           — up/down, migrations, tests, retrieval eval helpers
   .github/workflows/ci.yml — Backend pytest + Alembic; frontend npm ci + build
   scripts/           — PowerShell helpers for upload, retrieve, ask, etc.
-  docs/              — e.g. S3 CORS JSON sample
+  docs/              — architecture notes (this file), S3 CORS JSON sample, etc.
   apps/api/evals/    — Offline retrieval evaluation package (not imported by prod)
 
-pnpm-workspace.yaml lists apps/* and packages/*; root also uses npm workspaces
-in package.json for scripts like build:web and test:web.
+Root package.json defines npm workspaces (apps/*, packages/*) for build:web, test:web, etc.
 
 --------------------------------------------------------------------------------
 3. TECHNOLOGY STACK
