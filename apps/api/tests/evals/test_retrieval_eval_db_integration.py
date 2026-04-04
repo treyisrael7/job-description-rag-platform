@@ -28,43 +28,101 @@ def _shared_embedding() -> list[float]:
     return [CI_SHARED_EMBEDDING_VALUE] * EMBEDDING_DIM
 
 
-# Chunk texts are aligned with evals/retrieval/cases/job_description_starter.json expectations.
-_CI_CHUNKS: list[dict] = [
+# Corpus aligned with evals/retrieval/cases/job_description_starter.json (JD + resume kit).
+# top_k in the dataset is 10 so MMR returns the full candidate pool (<=10 chunks).
+_CI_SOURCES: list[dict] = [
     {
-        "chunk_index": 0,
-        "page_number": 1,
-        "section_type": "compensation",
-        "content": (
-            "The salary range for this senior role is $160,000 to $190,000 annually. "
-            "We offer a competitive salary range and equity."
-        ),
+        "source_type": "jd",
+        "title": "Platform Engineer JD (CI)",
+        "original_file_name": "platform_engineer_ci.pdf",
+        "chunks": [
+            {
+                "chunk_index": 0,
+                "page_number": 1,
+                "section_type": "compensation",
+                "content": (
+                    "The salary range for this senior role is $160,000 to $190,000 annually. "
+                    "We offer a competitive salary range and equity."
+                ),
+            },
+            {
+                "chunk_index": 1,
+                "page_number": 1,
+                "section_type": "qualifications",
+                "content": (
+                    "Education requirements: a Bachelor's degree in Computer Science or a related "
+                    "field is required. Qualifications and required skills: Python and PostgreSQL "
+                    "expertise with 5+ years building distributed systems for production backends."
+                ),
+            },
+            {
+                "chunk_index": 2,
+                "page_number": 2,
+                "section_type": "tools",
+                "content": (
+                    "Skills and qualifications for tooling are required: tools and technologies "
+                    "include AWS, Kubernetes, Terraform, and pgvector. The team uses Python "
+                    "services across the platform."
+                ),
+            },
+            {
+                "chunk_index": 3,
+                "page_number": 2,
+                "section_type": "responsibilities",
+                "content": (
+                    "Main responsibilities: you will build and operate backend services and "
+                    "collaborate with product, data, and infrastructure partners in this role."
+                ),
+            },
+            {
+                "chunk_index": 4,
+                "page_number": 3,
+                "section_type": "compensation",
+                "content": (
+                    "Compensation detail (tabular layout): | Role | Base Pay (USD) | | "
+                    "Senior Platform Engineer | $160,000 - $190,000 | Annual figures; "
+                    "bonus eligible."
+                ),
+            },
+            {
+                "chunk_index": 5,
+                "page_number": 3,
+                "section_type": "about",
+                "content": (
+                    "Remote work policy: we are hybrid with core collaboration days; "
+                    "remote-first Fridays. Expect Tuesday through Thursday in the office "
+                    "for synchronous planning."
+                ),
+            },
+            {
+                "chunk_index": 6,
+                "page_number": 3,
+                "section_type": "about",
+                "content": (
+                    "Reporting structure: this role reports to the Engineering Manager leading "
+                    "the Platform reliability group. Close partnership with the Platform team "
+                    "is expected."
+                ),
+            },
+        ],
     },
     {
-        "chunk_index": 1,
-        "page_number": 1,
-        "section_type": "qualifications",
-        "content": (
-            "Qualifications and required skills: Python and PostgreSQL expertise with 5+ years building "
-            "distributed systems for production backends."
-        ),
-    },
-    {
-        "chunk_index": 2,
-        "page_number": 2,
-        "section_type": "tools",
-        "content": (
-            "Skills and qualifications for tooling are required: tools and technologies include AWS, "
-            "Kubernetes, Terraform, and pgvector. The team uses Python services across the platform."
-        ),
-    },
-    {
-        "chunk_index": 3,
-        "page_number": 2,
-        "section_type": "responsibilities",
-        "content": (
-            "Main responsibilities: you will build and operate backend services and collaborate with "
-            "product, data, and infrastructure partners in this role."
-        ),
+        "source_type": "resume",
+        "title": "Candidate Resume (CI)",
+        "original_file_name": "resume_ci.pdf",
+        "chunks": [
+            {
+                "chunk_index": 0,
+                "page_number": 1,
+                "section_type": "summary",
+                "doc_domain": "resume",
+                "content": (
+                    "Resume highlights — leadership: previously an Engineering Lead managing a "
+                    "team of six engineers on observability and incident programs. This resume "
+                    "section summarizes leadership experience for interview follow-ups."
+                ),
+            },
+        ],
     },
 ]
 
@@ -103,28 +161,28 @@ async def _seed_ci_fixture_document() -> None:
         db.add(doc)
         await db.flush()
 
-        source = InterviewSource(
-            document_id=doc.id,
-            source_type="jd",
-            title="Platform Engineer JD (CI)",
-            original_file_name="platform_engineer_ci.pdf",
-        )
-        db.add(source)
-        await db.flush()
-
-        for spec in _CI_CHUNKS:
-            db.add(
-                DocumentChunk(
-                    document_id=doc.id,
-                    source_id=source.id,
-                    chunk_index=spec["chunk_index"],
-                    content=spec["content"],
-                    page_number=spec["page_number"],
-                    section_type=spec["section_type"],
-                    doc_domain="job_description",
-                    embedding=emb,
-                )
+        for src_spec in _CI_SOURCES:
+            source = InterviewSource(
+                document_id=doc.id,
+                source_type=src_spec["source_type"],
+                title=src_spec["title"],
+                original_file_name=src_spec["original_file_name"],
             )
+            db.add(source)
+            await db.flush()
+            for ch in src_spec["chunks"]:
+                db.add(
+                    DocumentChunk(
+                        document_id=doc.id,
+                        source_id=source.id,
+                        chunk_index=ch["chunk_index"],
+                        content=ch["content"],
+                        page_number=ch["page_number"],
+                        section_type=ch["section_type"],
+                        doc_domain=ch.get("doc_domain", "job_description"),
+                        embedding=emb,
+                    )
+                )
         await db.commit()
 
 

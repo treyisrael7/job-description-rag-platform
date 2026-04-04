@@ -14,7 +14,7 @@ def test_builtin_job_description_dataset_loads():
 
     assert dataset.dataset == "job_description_starter"
     assert dataset.version == 1
-    assert len(dataset.cases) >= 4
+    assert len(dataset.cases) >= 9
     assert all(case.fixture_ref == "platform_engineer_jd" for case in dataset.cases)
 
 

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "dataset": "job_description_starter",
-  "description": "Starter internal retrieval eval cases for job-description documents.",
+  "description": "Starter internal retrieval eval cases for job-description documents (JD + optional resume kit source).",
   "cases": [
     {
       "id": "jd-salary-range",
@@ -18,7 +18,7 @@
       "expected_source_types": [
         "jd"
       ],
-      "top_k": 4,
+      "top_k": 10,
       "notes": "Compensation-style ask query. Should align with section hinting for salary/pay questions."
     },
     {
@@ -38,7 +38,7 @@
       "expected_source_types": [
         "jd"
       ],
-      "top_k": 6,
+      "top_k": 10,
       "notes": "Broad qualifications query that should surface both technical skills and explicit requirements."
     },
     {
@@ -57,7 +57,7 @@
       "expected_source_types": [
         "jd"
       ],
-      "top_k": 5,
+      "top_k": 10,
       "notes": "Tooling query aimed at the tools/technologies section."
     },
     {
@@ -76,8 +76,95 @@
       "expected_source_types": [
         "jd"
       ],
-      "top_k": 5,
+      "top_k": 10,
       "notes": "Baseline responsibilities retrieval for interview question generation and ask flows."
+    },
+    {
+      "id": "jd-comp-dense-row",
+      "fixture_ref": "platform_engineer_jd",
+      "query": "What is the base pay band in USD?",
+      "expected_content_substrings": [
+        "Base Pay",
+        "USD",
+        "$160,000"
+      ],
+      "expected_section_types": [
+        "compensation"
+      ],
+      "expected_source_types": [
+        "jd"
+      ],
+      "top_k": 10,
+      "notes": "Dense tabular compensation row; tests recall when salary is not in prose form."
+    },
+    {
+      "id": "jd-remote-hybrid-policy",
+      "fixture_ref": "platform_engineer_jd",
+      "query": "What is the remote or hybrid work policy?",
+      "expected_content_substrings": [
+        "hybrid",
+        "remote-first",
+        "office"
+      ],
+      "expected_section_types": [
+        "about"
+      ],
+      "expected_source_types": [
+        "jd"
+      ],
+      "top_k": 10,
+      "notes": "Location / work arrangement query; should hit about-style policy text."
+    },
+    {
+      "id": "jd-education-degree",
+      "fixture_ref": "platform_engineer_jd",
+      "query": "What degree or education is required?",
+      "expected_content_substrings": [
+        "Bachelor",
+        "Computer Science",
+        "degree"
+      ],
+      "expected_section_types": [
+        "qualifications"
+      ],
+      "expected_source_types": [
+        "jd"
+      ],
+      "top_k": 10,
+      "notes": "Education gate often lives next to skills; ensures qualifications section surfaces."
+    },
+    {
+      "id": "jd-reporting-structure",
+      "fixture_ref": "platform_engineer_jd",
+      "query": "Who does this role report to?",
+      "expected_content_substrings": [
+        "Engineering Manager",
+        "reports to",
+        "Platform"
+      ],
+      "expected_section_types": [
+        "about"
+      ],
+      "expected_source_types": [
+        "jd"
+      ],
+      "top_k": 10,
+      "notes": "Reporting-line question; exercises about/company context retrieval."
+    },
+    {
+      "id": "jd-resume-leadership",
+      "fixture_ref": "platform_engineer_jd",
+      "query": "What leadership experience is listed on the resume?",
+      "expected_content_substrings": [
+        "Engineering Lead",
+        "team of six",
+        "managing"
+      ],
+      "expected_source_types": [
+        "resume"
+      ],
+      "top_k": 10,
+      "notes": "Interview Kit: evidence must come from resume source, not JD chunks."
     }
   ]
 }
