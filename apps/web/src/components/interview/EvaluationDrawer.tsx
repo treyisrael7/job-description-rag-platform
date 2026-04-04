@@ -2,16 +2,21 @@
 
 import { useEffect, useCallback, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import type {
-  EvaluationCitation,
-  EvidenceUsedItem,
-  InterviewEvaluateResponse,
+import {
+  ApiError,
+  collectEvalChunkIds,
+  submitInterviewRetrievalFeedback,
+  type EvaluationCitation,
+  type EvidenceUsedItem,
+  type InterviewEvaluateResponse,
 } from "@/lib/api";
 import { RubricDimensionScores, normalizeRubricScoresForDisplay } from "./RubricDimensionScores";
 
 interface EvaluationDrawerProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Document the session is tied to (required for retrieval feedback). */
+  documentId: string;
   result: InterviewEvaluateResponse | null;
   onRetry?: () => void;
   onNextQuestion?: () => void;
@@ -126,12 +131,26 @@ function evidenceRows(result: InterviewEvaluateResponse): Array<{
 export function EvaluationDrawer({
   isOpen,
   onClose,
+  documentId,
   result,
   onRetry,
   onNextQuestion,
   canNext,
 }: EvaluationDrawerProps) {
   const isMobile = useIsMobile();
+  const [retrievalOpen, setRetrievalOpen] = useState(false);
+  const [retrievalReason, setRetrievalReason] = useState("");
+  const [retrievalStatus, setRetrievalStatus] = useState<
+    "idle" | "sending" | "sent" | "error"
+  >("idle");
+  const [retrievalError, setRetrievalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRetrievalOpen(false);
+    setRetrievalReason("");
+    setRetrievalStatus("idle");
+    setRetrievalError(null);
+  }, [result?.answer_id]);
   const handleEscape = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -437,6 +456,86 @@ export function EvaluationDrawer({
                       </ul>
                     </div>
                   ) : null}
+
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/40 px-3 py-3 sm:px-4">
+                    {!retrievalOpen ? (
+                      <button
+                        type="button"
+                        onClick={() => setRetrievalOpen(true)}
+                        className="text-left text-sm text-zenodrift-text-muted underline decoration-slate-300 underline-offset-2 hover:text-zenodrift-text-strong"
+                      >
+                        Wrong job description sources or missing passages?
+                      </button>
+                    ) : retrievalStatus === "sent" ? (
+                      <p className="text-sm text-emerald-800">
+                        Thanks — we saved that for retrieval tuning.
+                      </p>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        <p className="text-xs text-zenodrift-text-muted">
+                          Tell us if the cited evidence didn’t match what you expected. Optional
+                          note helps us improve RAG.
+                        </p>
+                        <textarea
+                          value={retrievalReason}
+                          onChange={(e) => setRetrievalReason(e.target.value)}
+                          placeholder="What was missing or misleading? (optional)"
+                          rows={2}
+                          disabled={retrievalStatus === "sending"}
+                          className="w-full resize-none rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm text-zenodrift-text placeholder:text-slate-400 focus:border-zenodrift-accent focus:outline-none focus:ring-1 focus:ring-zenodrift-accent/30 disabled:opacity-60"
+                        />
+                        {retrievalError ? (
+                          <p className="text-xs text-red-600" role="alert">
+                            {retrievalError}
+                          </p>
+                        ) : null}
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={retrievalStatus === "sending"}
+                            onClick={async () => {
+                              setRetrievalError(null);
+                              setRetrievalStatus("sending");
+                              try {
+                                await submitInterviewRetrievalFeedback(
+                                  documentId,
+                                  result.answer_id,
+                                  {
+                                    reason: retrievalReason,
+                                    retrieval_chunk_ids: collectEvalChunkIds(result),
+                                  }
+                                );
+                                setRetrievalStatus("sent");
+                              } catch (e) {
+                                setRetrievalStatus("error");
+                                setRetrievalError(
+                                  e instanceof ApiError
+                                    ? String(e.detail || e.message)
+                                    : "Could not save feedback"
+                                );
+                              }
+                            }}
+                            className="rounded-lg bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-50"
+                          >
+                            {retrievalStatus === "sending" ? "Sending…" : "Submit feedback"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={retrievalStatus === "sending"}
+                            onClick={() => {
+                              setRetrievalOpen(false);
+                              setRetrievalReason("");
+                              setRetrievalStatus("idle");
+                              setRetrievalError(null);
+                            }}
+                            className="rounded-lg px-3 py-1.5 text-sm text-zenodrift-text-muted hover:bg-slate-100"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

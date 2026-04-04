@@ -227,6 +227,7 @@ export function InterviewSessionView({
       <EvaluationDrawer
         isOpen={evalDrawerOpen}
         onClose={() => setEvalDrawerOpen(false)}
+        documentId={documentId}
         result={evalResult}
         onRetry={() => setEvalResult(null)}
         onNextQuestion={handleNext}

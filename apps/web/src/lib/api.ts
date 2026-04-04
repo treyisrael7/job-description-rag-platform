@@ -738,6 +738,53 @@ export async function generateInterview(
   }
 }
 
+/** Chunk ids cited or used as evidence in an evaluation response (for retrieval feedback). */
+export function collectEvalChunkIds(res: InterviewEvaluateResponse): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const take = (s: string | null | undefined) => {
+    const t = (s ?? "").trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    ids.push(t);
+  };
+  for (const c of res.citations ?? []) take(c.chunk_id);
+  for (const e of res.evidence_used ?? []) take(e.chunkId);
+  for (const item of res.strengths_cited ?? []) {
+    for (const cit of item.citations ?? []) take(cit.chunkId);
+  }
+  for (const item of res.gaps_cited ?? []) {
+    for (const cit of item.citations ?? []) take(cit.chunkId);
+  }
+  return ids;
+}
+
+export interface InterviewRetrievalFeedbackResponse {
+  id: string;
+  updated: boolean;
+}
+
+export async function submitInterviewRetrievalFeedback(
+  documentId: string,
+  answerId: string,
+  options?: { reason?: string; retrieval_chunk_ids?: string[] }
+): Promise<InterviewRetrievalFeedbackResponse> {
+  const body: Record<string, unknown> = {
+    document_id: documentId,
+    answer_id: answerId,
+  };
+  if (options?.reason?.trim()) body.reason = options.reason.trim();
+  if (options?.retrieval_chunk_ids?.length) {
+    body.retrieval_chunk_ids = options.retrieval_chunk_ids;
+  }
+  const res = await fetch(`${API_BASE}/interview/retrieval-feedback`, {
+    method: "POST",
+    headers: await getAuthHeaders(),
+    body: JSON.stringify(body),
+  });
+  return handleResponse<InterviewRetrievalFeedbackResponse>(res);
+}
+
 export async function evaluateAnswer(
   documentId: string,
   questionId: string,

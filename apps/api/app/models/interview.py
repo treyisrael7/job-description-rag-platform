@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, Text, text
+from sqlalchemy import ForeignKey, Index, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -103,3 +103,58 @@ class InterviewAnswer(Base):
     )
 
     __table_args__ = (Index("ix_interview_answers_question_id", "question_id"),)
+
+
+class InterviewRetrievalFeedback(Base):
+    """User flag: retrieval/evidence for this evaluated answer missed the mark (RAG quality loop)."""
+
+    __tablename__ = "interview_retrieval_feedback"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    question_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("interview_questions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    answer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("interview_answers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    retrieval_chunk_ids: Mapped[list] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("answer_id", name="uq_interview_retrieval_feedback_answer_id"),
+        Index("ix_interview_retrieval_feedback_user_id", "user_id"),
+        Index("ix_interview_retrieval_feedback_document_id", "document_id"),
+        Index("ix_interview_retrieval_feedback_created_at", "created_at"),
+    )

@@ -3,7 +3,7 @@
 import uuid
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 QUESTION_MIX_PRESETS = {
@@ -285,6 +285,54 @@ class RecentSessionAnalyticsRow(BaseModel):
     question_count: int
     answer_count: int
     average_score: float | None
+
+
+class InterviewRetrievalFeedbackInput(BaseModel):
+    """Report that JD/resume retrieval for an evaluation felt wrong (optional note + chunk snapshot)."""
+
+    document_id: uuid.UUID
+    answer_id: uuid.UUID
+    reason: str | None = Field(None, max_length=4000)
+    retrieval_chunk_ids: list[str] | None = Field(
+        None,
+        description="Chunk UUID strings shown with the evaluation; server fills from stored feedback if omitted.",
+    )
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _strip_reason(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            s = value.strip()
+            return s or None
+        return value
+
+    @field_validator("retrieval_chunk_ids", mode="before")
+    @classmethod
+    def _normalize_chunk_ids(cls, value: object) -> object:
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            raise TypeError("retrieval_chunk_ids must be a list of strings")
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in value[:80]:
+            if not isinstance(item, str):
+                raise TypeError("each retrieval_chunk_id must be a string")
+            tid = item.strip()
+            if not tid or tid in seen:
+                continue
+            if len(tid) > 128:
+                raise ValueError("retrieval_chunk_id too long")
+            seen.add(tid)
+            out.append(tid)
+        return out
+
+
+class InterviewRetrievalFeedbackOutput(BaseModel):
+    id: uuid.UUID
+    updated: bool = Field(..., description="True if an existing row for this answer was overwritten.")
 
 
 class InterviewAnalyticsOverview(BaseModel):

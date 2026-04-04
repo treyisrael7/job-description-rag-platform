@@ -518,6 +518,130 @@ async def test_interview_evaluate_success(
             assert isinstance(sess.performance_profile[k], (int, float))
 
 
+@pytest.mark.asyncio
+async def test_interview_retrieval_feedback_success(client, demo_key_off, monkeypatch, force_auth):
+    """POST /interview/retrieval-feedback stores row linked to answer and document."""
+    from app.db.base import async_session_maker
+    from app.models import (
+        Document,
+        InterviewQuestion,
+        InterviewRetrievalFeedback,
+        InterviewSession,
+        User,
+    )
+    from sqlalchemy import select
+
+    async def _mock_evaluate(*args, **kwargs):
+        return {
+            "score": 6.0,
+            "summary": "Ok.",
+            "score_reasoning": "Brief.",
+            "strengths": [],
+            "gaps": [],
+            "citations": [{"chunk_id": "chunk-xyz", "page_number": 2, "text": "snippet"}],
+            "strengths_cited": [],
+            "gaps_cited": [],
+            "improved_answer": "",
+            "follow_up_questions": [],
+            "evidence_used": [
+                {
+                    "quote": "snippet",
+                    "sourceId": "chunk-xyz",
+                    "sourceType": "jd",
+                    "sourceTitle": "",
+                    "page": 2,
+                    "chunkId": "chunk-xyz",
+                }
+            ],
+            "evidence_for_scoring": [{"snippet": "x"}],
+        }
+
+    monkeypatch.setattr("app.routers.interview.generate_evaluate.evaluate_answer_with_retrieval", _mock_evaluate)
+    monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+
+    user_id = uuid.uuid4()
+    async with async_session_maker() as db:
+        db.add(User(id=user_id, email="rf-test@t.local"))
+        await db.commit()
+    await force_auth(user_id=user_id, email="rf-test@t.local")
+
+    async with async_session_maker() as db:
+        doc = Document(
+            user_id=user_id,
+            filename="jd.pdf",
+            s3_key="x",
+            status="ready",
+            doc_domain="job_description",
+        )
+        db.add(doc)
+        await db.flush()
+        doc_id = doc.id
+        session = InterviewSession(
+            user_id=user_id,
+            document_id=doc_id,
+            mode="role_driven",
+            difficulty="junior",
+        )
+        db.add(session)
+        await db.flush()
+        q = InterviewQuestion(
+            session_id=session.id,
+            type="behavioral",
+            question="Tell me about a time.",
+            rubric_json={"bullets": [], "evidence": [], "key_topics": []},
+        )
+        db.add(q)
+        await db.flush()
+        qid = q.id
+        await db.commit()
+
+    ev = await client.post(
+        "/interview/evaluate",
+        json={
+            "document_id": str(doc_id),
+            "question_id": str(qid),
+            "answer_text": "I led a project once.",
+            "mode": "full",
+        },
+    )
+    assert ev.status_code == 200
+    answer_id = ev.json()["answer_id"]
+
+    fb = await client.post(
+        "/interview/retrieval-feedback",
+        json={
+            "document_id": str(doc_id),
+            "answer_id": answer_id,
+            "reason": "Wrong section retrieved",
+        },
+    )
+    assert fb.status_code == 200
+    data = fb.json()
+    assert data["updated"] is False
+    assert "id" in data
+
+    async with async_session_maker() as db:
+        r = await db.execute(select(InterviewRetrievalFeedback))
+        rows = r.scalars().all()
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.answer_id == uuid.UUID(answer_id)
+        assert row.document_id == doc_id
+        assert row.reason == "Wrong section retrieved"
+        assert "chunk-xyz" in row.retrieval_chunk_ids
+
+    fb2 = await client.post(
+        "/interview/retrieval-feedback",
+        json={"document_id": str(doc_id), "answer_id": answer_id, "reason": "Updated note"},
+    )
+    assert fb2.status_code == 200
+    assert fb2.json()["updated"] is True
+
+    async with async_session_maker() as db:
+        r = await db.execute(select(InterviewRetrievalFeedback))
+        assert len(r.scalars().all()) == 1
+
+
 # --- GET endpoint tests ---
 
 
