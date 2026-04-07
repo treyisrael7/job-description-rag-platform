@@ -79,9 +79,9 @@ _CI_SOURCES: list[dict] = [
                 "page_number": 3,
                 "section_type": "compensation",
                 "content": (
-                    "Compensation detail (tabular layout): | Role | Base Pay (USD) | | "
-                    "Senior Platform Engineer | $160,000 - $190,000 | Annual figures; "
-                    "bonus eligible."
+                    "Compensation detail (tabular layout): base pay band in USD is summarized below. "
+                    "| Role | Base Pay (USD) | | Senior Platform Engineer | $160,000 - $190,000 | "
+                    "Annual figures; bonus eligible."
                 ),
             },
             {
@@ -117,9 +117,9 @@ _CI_SOURCES: list[dict] = [
                 "section_type": "summary",
                 "doc_domain": "resume",
                 "content": (
-                    "Resume highlights — leadership: previously an Engineering Lead managing a "
-                    "team of six engineers on observability and incident programs. This resume "
-                    "section summarizes leadership experience for interview follow-ups."
+                    "Resume highlights — leadership experience listed here: previously an Engineering "
+                    "Lead managing a team of six engineers on observability and incident programs. "
+                    "This resume section summarizes leadership experience for interview follow-ups."
                 ),
             },
         ],
