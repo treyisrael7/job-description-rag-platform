@@ -6,6 +6,8 @@ The UUID must match evals/retrieval/cases/ci_fixture_map.json so local CLI runs 
     --compare --fixture-map evals/retrieval/cases/ci_fixture_map.json
 
 after seeding the document (pytest seeds it automatically; for manual runs use the API or SQL).
+
+The user UUID is owned by the same integration test seed (see tests/evals/test_retrieval_eval_db_integration.py).
 """
 
 from __future__ import annotations
