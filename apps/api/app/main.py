@@ -19,7 +19,11 @@ from app.core.config import settings
 from app.core.middleware import DemoGateMiddleware, RateLimitMiddleware
 from app.routers import analyze_fit, ask, documents, fit_history, interview, retrieve, user_resume
 
-app = FastAPI(title="InterviewOS API", version="0.1.0")
+app = FastAPI(
+    title="InterviewOS API",
+    version="0.1.0",
+    description="Job-description ingestion, RAG Q&A, interview practice, and fit analysis.",
+)
 
 # CORS: allow_credentials=True cannot be used with allow_origins=["*"] — browser blocks it.
 _DEFAULT_ORIGINS = [
