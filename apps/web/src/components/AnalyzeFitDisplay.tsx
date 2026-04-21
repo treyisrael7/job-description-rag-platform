@@ -129,6 +129,31 @@ export function AnalyzeFitDisplay({ data }: { data: AnalyzeFitResult }) {
               >
                 <p className="font-medium text-zenodrift-text-strong">{r.gap}</p>
                 <p className="mt-2 text-zenodrift-text">{r.suggestion}</p>
+                {r.missing_keywords?.length ? (
+                  <div className="mt-2">
+                    <p className="text-xs font-medium uppercase tracking-wide text-zenodrift-text-muted">
+                      Missing keywords
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {r.missing_keywords.map((kw, kwIndex) => (
+                        <span
+                          key={`${kw}-${kwIndex}`}
+                          className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900 ring-1 ring-amber-200/70"
+                        >
+                          {kw}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {r.bullet_rewrite?.trim() ? (
+                  <div className="mt-2 rounded-lg bg-emerald-50/70 px-3 py-2 text-xs text-emerald-950 ring-1 ring-emerald-200/70">
+                    <p className="font-semibold uppercase tracking-wide text-emerald-800/90">
+                      Bullet rewrite
+                    </p>
+                    <p className="mt-1">{r.bullet_rewrite}</p>
+                  </div>
+                ) : null}
                 {r.example_resume_line?.trim() ? (
                   <p className="mt-2 rounded-lg bg-slate-50/90 px-3 py-2 text-xs italic text-zenodrift-text-muted">
                     Example line: {r.example_resume_line}

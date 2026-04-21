@@ -497,6 +497,8 @@ export interface AnalyzeFitGap {
 export interface AnalyzeFitRecommendation {
   gap: string;
   suggestion: string;
+  missing_keywords: string[];
+  bullet_rewrite: string;
   example_resume_line: string;
 }
 

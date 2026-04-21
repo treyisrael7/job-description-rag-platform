@@ -65,6 +65,8 @@ class AnalyzeFitGapOut(BaseModel):
 class AnalyzeFitRecommendationOut(BaseModel):
     gap: str
     suggestion: str
+    missing_keywords: list[str] = Field(default_factory=list)
+    bullet_rewrite: str = ""
     example_resume_line: str
 
 

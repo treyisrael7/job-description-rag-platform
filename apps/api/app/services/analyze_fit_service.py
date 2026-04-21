@@ -198,12 +198,27 @@ _ANALYZE_FIT_JSON_SCHEMA: dict[str, Any] = {
                             "type": "string",
                             "description": "Specific resume change: name a JD skill/keyword to add, how to frame a project or role from the resume, and what to edit. No generic career advice.",
                         },
+                        "missing_keywords": {
+                            "type": "array",
+                            "description": "Exact JD keywords or short phrases missing from the resume evidence for this gap.",
+                            "items": {"type": "string"},
+                        },
+                        "bullet_rewrite": {
+                            "type": "string",
+                            "description": "A concrete resume bullet rewrite that includes missing keywords and remains truthful to resume excerpts.",
+                        },
                         "example_resume_line": {
                             "type": "string",
                             "description": "One concrete bullet or phrase tailored to the candidate's resume context.",
                         },
                     },
-                    "required": ["gap", "suggestion", "example_resume_line"],
+                    "required": [
+                        "gap",
+                        "suggestion",
+                        "missing_keywords",
+                        "bullet_rewrite",
+                        "example_resume_line",
+                    ],
                     "additionalProperties": False,
                 },
             },
@@ -261,7 +276,27 @@ class FitRecommendation(BaseModel):
 
     gap: str
     suggestion: str
+    missing_keywords: list[str] = Field(default_factory=list)
+    bullet_rewrite: str = ""
     example_resume_line: str
+
+    @field_validator("missing_keywords", mode="before")
+    @classmethod
+    def _normalize_missing_keywords(cls, v: Any) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for raw in v:
+            token = str(raw or "").strip()
+            if not token:
+                continue
+            key = token.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(token)
+        return deduped[:10]
 
 
 class AnalyzeFitLLMResult(BaseModel):
@@ -551,6 +586,8 @@ Rules:
 - gaps: JD requirements that are missing or clearly unsupported in the resume; mark importance "high" when the gap is critical.
 - summary: 2–5 sentences, neutral and specific.
 - recommendations: each item's "gap" must echo that gap's requirement text; "suggestion" must be specific—name an exact skill or keyword from the JD to add, propose how to reframe a real project or role already visible in RESUME_EXCERPTS (do not invent employers or jobs not in the excerpts), and say what to change on the resume. Ban vague phrases like "highlight your strengths", "tailor your resume", "develop skills", or "improve communication".
+  "missing_keywords": list 1-6 exact JD skills/keywords for this gap.
+  "bullet_rewrite": write one concrete, ATS-friendly bullet using those keywords and only plausible claims from RESUME_EXCERPTS.
   "example_resume_line": one plausible bullet or phrase the candidate could use, consistent with their resume when possible.
 
 Output must conform exactly to the JSON schema you are given (no markdown, no extra keys)."""
@@ -597,6 +634,8 @@ def _align_recommendations_to_gaps(
             FitRecommendation(
                 gap=g.requirement.strip(),
                 suggestion=(r.suggestion or "").strip(),
+                missing_keywords=list(r.missing_keywords or []),
+                bullet_rewrite=(r.bullet_rewrite or "").strip(),
                 example_resume_line=(r.example_resume_line or "").strip(),
             )
         )

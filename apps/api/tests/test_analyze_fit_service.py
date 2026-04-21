@@ -147,6 +147,8 @@ def test_analyze_fit_structured_response_parsed(monkeypatch):
             {
                 "gap": "Kubernetes",
                 "suggestion": "Add the exact term Kubernetes; reframe your Docker work as container orchestration exposure and study one cluster setup you can describe.",
+                "missing_keywords": ["Kubernetes", "container orchestration"],
+                "bullet_rewrite": "Built and deployed containerized backend services with Docker, and piloted Kubernetes (minikube) to validate orchestration workflows for API releases.",
                 "example_resume_line": "Deployed services with Docker; building hands-on experience with Kubernetes (minikube) for orchestration.",
             }
         ],
@@ -177,6 +179,8 @@ def test_analyze_fit_structured_response_parsed(monkeypatch):
     assert out["gap_count"] == 1
     assert len(out["recommendations"]) == 1
     assert out["recommendations"][0]["gap"] == "Kubernetes"
+    assert "Kubernetes" in out["recommendations"][0]["missing_keywords"]
+    assert "Kubernetes" in out["recommendations"][0]["bullet_rewrite"]
     assert "Kubernetes" in out["recommendations"][0]["example_resume_line"]
 
 
