@@ -100,6 +100,7 @@ async def generate(
         role_profile["seniority"] = body.seniority_override
     if body.question_mix_preset and body.question_mix_preset in QUESTION_MIX_PRESETS:
         role_profile["questionMix"] = QUESTION_MIX_PRESETS[body.question_mix_preset].copy()
+    role_profile["interviewDifficulty"] = body.difficulty
 
     competencies = getattr(doc, "competencies", None)
     if not competencies or not isinstance(competencies, list):
@@ -219,6 +220,7 @@ async def evaluate(
             "seniority": role_profile.seniority,
             "focusAreas": role_profile.focusAreas,
             "questionMix": role_profile.questionMix,
+            "interviewDifficulty": session.difficulty,
         }
         if role_profile
         else {}

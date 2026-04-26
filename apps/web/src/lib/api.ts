@@ -76,6 +76,7 @@ export interface PresignResponse {
 export interface AskResponse {
   answer: string;
   citations: Array<{
+    label?: string | null;
     chunk_id: string;
     page_number: number;
     snippet: string;
@@ -506,6 +507,11 @@ export interface AnalyzeFitResult {
   matches: AnalyzeFitMatch[];
   gaps: AnalyzeFitGap[];
   fit_score: number;
+  matched_count?: number;
+  total_requirements?: number;
+  gap_count?: number;
+  gap_penalty?: number;
+  coverage_raw?: number;
   summary: string;
   recommendations: AnalyzeFitRecommendation[];
 }

@@ -127,6 +127,12 @@ def _build_domain_aware_evaluation_prompt(
 
     domain = role_profile.get("domain", "general_business")
     seniority = role_profile.get("seniority", "entry")
+    interview_difficulty = str(role_profile.get("interviewDifficulty") or "mid").strip().lower()
+    difficulty_hint = {
+        "junior": "Expect fundamentals, clear communication, and credible baseline examples; do not penalize for missing senior-level architecture unless the rubric explicitly requires it.",
+        "mid": "Expect independent delivery, practical tradeoffs, debugging, and collaboration depth.",
+        "senior": "Expect ambiguity handling, strategy, tradeoffs, leadership, mentoring, and measurable impact.",
+    }.get(interview_difficulty, "Expect realistic mid-level depth.")
     domain_hint = EVALUATION_DOMAIN_HINTS.get(domain, EVALUATION_DOMAIN_HINTS["general_business"])
 
     header = f"""Session context (use when tuning expectations):
@@ -134,6 +140,8 @@ def _build_domain_aware_evaluation_prompt(
 - Focus area: {focus_area}
 - Competency: {competency_label or "(none)"}
 - Role domain: {domain} | Seniority: {seniority}
+- Interview difficulty: {interview_difficulty}
+- Difficulty expectation: {difficulty_hint}
 - Domain note: {domain_hint}
 
 """

@@ -36,6 +36,10 @@ class AskInput(BaseModel):
 
 
 class Citation(BaseModel):
+    label: str | None = Field(
+        default=None,
+        description="Stable inline label used in the answer, for example p2-c3.",
+    )
     chunk_id: str
     page_number: int
     snippet: str
@@ -44,7 +48,7 @@ class Citation(BaseModel):
 class AskOutput(BaseModel):
     answer: str = Field(
         ...,
-        description="JSON string: key_job_requirements, matches, gaps, fit_score, reasoning.",
+        description="Grounded natural-language answer. Inline citation labels refer to citations.",
     )
     citations: list[Citation]
 

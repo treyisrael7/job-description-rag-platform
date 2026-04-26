@@ -1,4 +1,4 @@
-"""Grounded Q&A: structured recruiter-style fit reasoning over retrieved excerpts."""
+"""Grounded Q&A over uploaded document excerpts."""
 
 import json
 import logging
@@ -11,42 +11,28 @@ from app.services.token_budget import budget_grounded_qa_prompt
 
 logger = logging.getLogger(__name__)
 
-# OpenAI sampling: keep deterministic, within 0–0.3 per product guidance.
+# OpenAI sampling: keep deterministic, within 0-0.3 per product guidance.
 QA_TEMPERATURE = 0.2
 
-_SYSTEM_PROMPT = """You are a strict hiring analyst comparing a job description to a resume.
+_SYSTEM_PROMPT = """You answer questions about an uploaded job description PDF using retrieved excerpts.
 
 You are given:
-1. Job description excerpts
-2. Candidate resume excerpts
+1. Job description/document excerpts
+2. Optional candidate resume excerpts
 
 Tasks:
-- Extract key job requirements from the JD excerpts only
-- For each requirement, decide if the resume proves same-kind experience (strict bar below)
-- Put unmet or weakly supported requirements in gaps, not matches
-- Assign fit_score 0–100 that reflects strict matches vs gaps
-- Reasoning must reference only what appears in the excerpts
+- Answer the user's question directly and concisely.
+- Use only facts present in the excerpts.
+- Cite factual claims with the exact citation labels supplied in the excerpts, such as [p2-c3].
+- If the excerpts do not contain the answer, say you could not find that information in the uploaded document.
+- If the user asks about candidate fit and resume excerpts are available, compare the JD and resume using only the excerpts and cite both where relevant.
 
-Strict matching rules (critical):
-- A row belongs in "matches" only if resume text shows explicit experience in the same professional domain as the requirement. Do not use loose analogies ("both involve data/numbers/automation/cross-functional work").
-- For finance, FP&A, accounting, treasury, or corporate reporting roles: matches require finance-adjacent work (for example budgeting, forecasting, financial models, P&L or variance work, management or executive reporting, expense review, KPIs for the business, incentive comp design). Generic software shipping, unrelated product dashboards, sports or fantasy analytics, or RPA in unrelated domains do NOT count unless the resume clearly ties that work to financial or operational reporting for an organization.
-- Education alone (degree/minor/coursework) does not satisfy substantive job duties like "developing financial models" or "executive reporting" unless the requirement is explicitly education-only.
-- When unsure, use "gaps", not "matches". Prefer more gaps and a lower fit_score over generous stretching.
-- Do not invent resume content; paraphrase only what appears in resume excerpts.
+Do not invent details. Do not return JSON. Do not use markdown tables."""
 
-Other rules:
-- Do not hallucinate
-- If resume excerpts are empty, all requirements are gaps and fit_score should be very low
-
-Return STRICT JSON only."""
-
-_JSON_SHAPE_INSTRUCTIONS = """
-Return one JSON object with exactly these keys (no markdown, no code fences, no extra keys):
-- "key_job_requirements": array of strings (each requirement must be grounded in job description excerpts)
-- "matches": array of objects, each with "requirement" (string), "candidate_experience" (string), "alignment_notes" (string). Only include strong same-domain matches per system rules.
-- "gaps": array of objects, each with "requirement" (string), "reason" (string). Include every JD requirement not in "matches", plus any you would have weakly matched under a loose standard.
-- "fit_score": integer from 0 through 100 (aligned with strict matches vs gaps)
-- "reasoning": string (overall narrative; only claims supported by the excerpts above)
+_ANSWER_INSTRUCTIONS = """
+Write a concise answer in plain text.
+Include citation labels inline immediately after the sentence or phrase they support, using exactly the labels shown above, for example [p1-c2].
+If multiple excerpts support a sentence, include multiple labels.
 """
 
 
@@ -67,8 +53,7 @@ def _format_excerpt_block(label: str, chunks: list[dict], start_index: int) -> t
     lines: list[str] = []
     i = start_index
     for c in chunks:
-        page = c.get("page_number", 0)
-        marker = f"[p{page}-c{i}]"
+        marker = f"[{_citation_label(c, i)}]"
         snippet = normalize_jd_text(c.get("snippet", "")).strip()
         lines.append(f"{marker} {snippet}")
         i += 1
@@ -88,7 +73,7 @@ def _build_user_content_for_budget(jd_chunks: list[dict], resume_chunks: list[di
 User question / focus:
 {question.strip()}
 
-{_JSON_SHAPE_INSTRUCTIONS.strip()}
+{_ANSWER_INSTRUCTIONS.strip()}
 """
 
 
@@ -96,6 +81,15 @@ def _extract_json_object(raw: str) -> str:
     raw = (raw or "").strip()
     m = re.search(r"\{[\s\S]*\}", raw)
     return m.group(0) if m else raw
+
+
+def _citation_label(chunk: dict, index: int) -> str:
+    page = chunk.get("page_number") if chunk.get("page_number") is not None else chunk.get("page")
+    try:
+        page_num = int(page)
+    except (TypeError, ValueError):
+        page_num = 0
+    return f"p{page_num}-c{index}"
 
 
 # Chunks are list of {chunk_id, page_number, snippet, source_type?, ...}
@@ -106,15 +100,15 @@ def generate_grounded_answer(
     max_tokens: int | None = None,
 ) -> tuple[str, list[dict]]:
     """
-    Call OpenAI with structured recruiter reasoning. ``answer`` is a JSON string
-    (validated when parseable). Citations list mirrors retrieved chunks for API compatibility.
+    Call OpenAI with grounded document QA instructions. Citations mirror the
+    excerpts that were supplied to the model and include the labels shown there.
     """
     max_tokens = max_tokens or settings.max_completion_tokens
     max_tokens = max(max_tokens, 1200)
 
     if not chunks:
         return (
-            "We could not find enough in the job and resume snippets to answer that. Try asking in a different way.",
+            "We could not find enough relevant text in the uploaded document to answer that. Try asking in a different way.",
             [],
         )
 
@@ -140,27 +134,20 @@ def generate_grounded_answer(
         ],
         max_tokens=effective_max_tokens,
         temperature=QA_TEMPERATURE,
-        response_format={"type": "json_object"},
     )
 
-    raw = (response.choices[0].message.content or "").strip()
-    answer: str
-    try:
-        payload = json.loads(_extract_json_object(raw))
-        if not isinstance(payload, dict):
-            raise TypeError("root must be object")
-        answer = json.dumps(payload, ensure_ascii=False)
-    except (json.JSONDecodeError, TypeError, ValueError) as e:
-        logger.warning("QA JSON parse failed, returning raw model text: %s", e)
-        answer = raw
+    answer = (response.choices[0].message.content or "").strip()
+    if not answer:
+        answer = "We could not find enough relevant text in the uploaded document to answer that."
 
     citations = [
         {
+            "label": _citation_label(c, i),
             "chunk_id": str(c.get("chunk_id") or c.get("chunkId") or ""),
             "page_number": int(c.get("page_number") if c.get("page_number") is not None else c.get("page") or 0),
             "snippet": normalize_jd_text(c.get("snippet", "")),
         }
-        for c in budget_chunks
+        for i, c in enumerate(budget_chunks, start=1)
     ]
 
     return answer, citations

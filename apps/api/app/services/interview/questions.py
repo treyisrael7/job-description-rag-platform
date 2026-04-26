@@ -71,6 +71,12 @@ def _generate_single_question(
     domain = role_profile.get("domain", "general_business")
     seniority = role_profile.get("seniority", "entry")
     seniority_hint = "entry-level" if seniority == "entry" else "mid-level" if seniority == "mid" else "senior-level"
+    interview_difficulty = str(role_profile.get("interviewDifficulty") or "mid").strip().lower()
+    difficulty_guidance = {
+        "junior": "Ask for fundamentals, concrete examples, and clear reasoning. Avoid senior architecture scope unless the JD requires it.",
+        "mid": "Ask for tradeoffs, ownership, debugging, collaboration, and evidence of independent delivery.",
+        "senior": "Ask for ambiguity, strategy, system design, leadership, prioritization, and measurable business or technical impact.",
+    }.get(interview_difficulty, "Ask at a realistic mid-level depth with clear role-specific follow-ups.")
 
     question_type = _prompt_question_type(canonical_question_type, adaptive_target)
 
@@ -107,20 +113,22 @@ Ground all questions in the provided job description context.
 
 Competency: "{competency_label}"
 SENIORITY: {seniority} ({seniority_hint})
-DOMAIN: {domain}{followup_context}
+DOMAIN: {domain}
+INTERVIEW DIFFICULTY: {interview_difficulty} — {difficulty_guidance}{followup_context}
 
 RULES:
 1. Follow the question type above; shape the line of questioning as: behavioral / role-specific skills / scenario as appropriate to that type.
 2. The question MUST be grounded in the job description excerpts in the user message.
-3. whatGoodLooksLike: 2-4 bullets describing what a strong answer covers.
-4. Output valid JSON only: {{"question": "...", "whatGoodLooksLike": ["...","..."]}}"""
+3. Tune depth to INTERVIEW DIFFICULTY. A senior question should require more tradeoff/leadership depth than a junior question.
+4. whatGoodLooksLike: 2-4 bullets describing what a strong answer covers at this difficulty.
+5. Output valid JSON only: {{"question": "...", "whatGoodLooksLike": ["...","..."]}}"""
 
     user_content = f"""Competency: {competency_label}
 
 Job description context:
 {excerpts_text}
 
-Generate exactly one interview question per the system instructions (question type: {question_type}).{user_followup}
+Generate exactly one interview question per the system instructions (question type: {question_type}, interview difficulty: {interview_difficulty}).{user_followup}
 Output JSON only."""
 
     try:
@@ -310,6 +318,7 @@ def _build_domain_aware_prompt(
 
     domain = role_profile.get("domain", "general_business")
     seniority = role_profile.get("seniority", "entry")
+    interview_difficulty = str(role_profile.get("interviewDifficulty") or "mid").strip().lower()
     focus_areas = role_profile.get("focusAreas") or []
     question_mix = role_profile.get("questionMix") or {}
 
@@ -323,6 +332,11 @@ def _build_domain_aware_prompt(
 
     role_specific_hint = DOMAIN_ROLE_SPECIFIC_GUIDANCE.get(domain, DOMAIN_ROLE_SPECIFIC_GUIDANCE["general_business"])
     seniority_hint = "entry-level" if seniority == "entry" else "mid-level" if seniority == "mid" else "senior-level"
+    difficulty_guidance = {
+        "junior": "fundamentals, direct examples, baseline role readiness",
+        "mid": "tradeoffs, independent ownership, cross-functional execution",
+        "senior": "ambiguity, architecture/strategy, leadership, prioritization, measurable impact",
+    }.get(interview_difficulty, "realistic mid-level depth")
 
     focus_areas_text = ", ".join(focus_areas) if focus_areas else "communication, problem solving"
 
@@ -331,6 +345,7 @@ Generate questions that are DOMAIN-AWARE and tailored to the role.
 
 DOMAIN: {domain}
 SENIORITY: {seniority} ({seniority_hint})
+INTERVIEW DIFFICULTY: {interview_difficulty} ({difficulty_guidance})
 FOCUS AREAS (each question must map to ONE): {focus_areas_text}
 
 QUESTION TYPES:
@@ -343,9 +358,10 @@ QUESTION MIX (approximate): behavioral {b}%, role_specific {r}%, scenario {s}%
 RULES:
 1. Each question MUST map to exactly one focusArea from the list above.
 2. Scale depth and difficulty by seniority ({seniority_hint}).
-3. Ground questions in the evidence excerpts; cite by index [0], [1], etc. in evidence_indices.
-4. whatGoodLooksLike: 2-4 bullets describing what a strong answer covers.
-5. mustMention: 0-3 bullets of key points the answer should reference (optional, can be empty).
+3. Also scale depth by INTERVIEW DIFFICULTY: junior should test foundations; senior should test ambiguity, tradeoffs, leadership, and impact.
+4. Ground questions in the evidence excerpts; cite by index [0], [1], etc. in evidence_indices.
+5. whatGoodLooksLike: 2-4 bullets describing what a strong answer covers at the requested difficulty.
+6. mustMention: 0-3 bullets of key points the answer should reference (optional, can be empty).
 
 Output valid JSON only, no markdown:
 {{"questions": [{{"type": "behavioral"|"role_specific"|"scenario", "focusArea": "...", "question": "...", "whatGoodLooksLike": ["...","..."], "mustMention": ["..."]|[], "evidence_indices": [0,1]}}]}}"""

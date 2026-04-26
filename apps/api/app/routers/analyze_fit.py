@@ -14,7 +14,10 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models import Document, FitAnalysis, User
 from app.services.analyze_fit_retrieval import augment_analyze_fit_chunks_with_resume_education
-from app.services.analyze_fit_service import analyze_fit as run_analyze_fit
+from app.services.analyze_fit_service import (
+    analyze_fit as run_analyze_fit,
+    compute_fit_score,
+)
 from app.services.fit_analysis_cache import (
     DEFAULT_ANALYZE_FIT_QUESTION,
     analyze_fit_query_fingerprint,
@@ -74,6 +77,11 @@ class AnalyzeFitResponse(BaseModel):
     matches: list[AnalyzeFitMatchOut]
     gaps: list[AnalyzeFitGapOut]
     fit_score: int
+    matched_count: int = 0
+    total_requirements: int = 0
+    gap_count: int = 0
+    gap_penalty: float = 0.0
+    coverage_raw: float = 0.0
     summary: str
     recommendations: list[AnalyzeFitRecommendationOut]
 
@@ -104,10 +112,16 @@ def _analyze_fit_response_from_row(row: FitAnalysis) -> AnalyzeFitResponse:
     matches = list(row.matches_json) if isinstance(row.matches_json, list) else []
     gaps = list(row.gaps_json) if isinstance(row.gaps_json, list) else []
     recs = list(row.recommendations_json) if isinstance(row.recommendations_json, list) else []
+    score_meta = compute_fit_score(matches, gaps)
     return AnalyzeFitResponse(
         matches=[AnalyzeFitMatchOut(**m) for m in matches],
         gaps=[AnalyzeFitGapOut(**g) for g in gaps],
         fit_score=int(row.fit_score),
+        matched_count=int(score_meta["matched_count"]),
+        total_requirements=int(score_meta["total_requirements"]),
+        gap_count=int(score_meta["gap_count"]),
+        gap_penalty=float(score_meta["gap_penalty"]),
+        coverage_raw=float(score_meta["coverage_raw"]),
         summary=row.summary or "",
         recommendations=[AnalyzeFitRecommendationOut(**r) for r in recs],
     )
@@ -256,10 +270,16 @@ async def analyze_fit_endpoint(
             if isinstance(cached.recommendations_json, list)
             else []
         )
+        score_meta = compute_fit_score(matches, gaps)
         return AnalyzeFitResponse(
             matches=[AnalyzeFitMatchOut(**m) for m in matches],
             gaps=[AnalyzeFitGapOut(**g) for g in gaps],
             fit_score=int(cached.fit_score),
+            matched_count=int(score_meta["matched_count"]),
+            total_requirements=int(score_meta["total_requirements"]),
+            gap_count=int(score_meta["gap_count"]),
+            gap_penalty=float(score_meta["gap_penalty"]),
+            coverage_raw=float(score_meta["coverage_raw"]),
             summary=cached.summary or "",
             recommendations=[AnalyzeFitRecommendationOut(**r) for r in recs],
         )
@@ -347,6 +367,11 @@ async def analyze_fit_endpoint(
         matches=[AnalyzeFitMatchOut(**m) for m in raw["matches"]],
         gaps=[AnalyzeFitGapOut(**g) for g in raw["gaps"]],
         fit_score=raw["fit_score"],
+        matched_count=int(raw.get("matched_count") or 0),
+        total_requirements=int(raw.get("total_requirements") or 0),
+        gap_count=int(raw.get("gap_count") or 0),
+        gap_penalty=float(raw.get("gap_penalty") or 0.0),
+        coverage_raw=float(raw.get("coverage_raw") or 0.0),
         summary=raw["summary"],
         recommendations=[AnalyzeFitRecommendationOut(**r) for r in raw["recommendations"]],
     )

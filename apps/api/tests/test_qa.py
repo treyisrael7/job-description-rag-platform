@@ -1,6 +1,5 @@
-"""Unit tests for generate_grounded_answer (structured JSON, temperature)."""
+"""Unit tests for generate_grounded_answer."""
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,29 +21,17 @@ def test_generate_grounded_answer_requires_api_key(monkeypatch):
         generate_grounded_answer("q", [{"chunk_id": "1", "page_number": 1, "snippet": "x"}])
 
 
-def test_generate_grounded_answer_json_and_temperature(monkeypatch):
+def test_generate_grounded_answer_plain_answer_citations_and_temperature(monkeypatch):
     import app.services.qa as qa_mod
 
     monkeypatch.setattr(qa_mod.settings, "openai_api_key", "sk-test")
     monkeypatch.setattr(qa_mod.settings, "model_fast", "gpt-4o-mini")
     monkeypatch.setattr(qa_mod.settings, "max_completion_tokens", 500)
 
-    payload = {
-        "key_job_requirements": ["Python"],
-        "matches": [
-            {
-                "requirement": "Python",
-                "candidate_experience": "5y Python",
-                "alignment_notes": "Strong match per resume excerpt.",
-            }
-        ],
-        "gaps": [],
-        "fit_score": 85,
-        "reasoning": "Resume supports Python requirement shown in JD excerpts.",
-    }
-
     mock_resp = MagicMock()
-    mock_resp.choices = [MagicMock(message=MagicMock(content=json.dumps(payload)))]
+    mock_resp.choices = [
+        MagicMock(message=MagicMock(content="The role requires Python experience [p1-c1]."))
+    ]
 
     captured: dict = {}
 
@@ -63,13 +50,13 @@ def test_generate_grounded_answer_json_and_temperature(monkeypatch):
 
     assert 0 <= QA_TEMPERATURE <= 0.3
     assert captured.get("temperature") == QA_TEMPERATURE
-    assert captured.get("response_format") == {"type": "json_object"}
+    assert "response_format" not in captured
     sys_msg = captured["messages"][0]["content"]
-    assert "strict hiring analyst" in sys_msg.lower()
+    assert "uploaded job description pdf" in sys_msg.lower()
     assert "Job description excerpts" in captured["messages"][1]["content"]
     assert "Candidate resume excerpts" in captured["messages"][1]["content"]
 
-    out = json.loads(answer)
-    assert out["fit_score"] == 85
-    assert len(out["matches"]) == 1
+    assert answer == "The role requires Python experience [p1-c1]."
     assert len(cites) == 2
+    assert cites[0]["label"] == "p1-c1"
+    assert cites[0]["chunk_id"] == "a"

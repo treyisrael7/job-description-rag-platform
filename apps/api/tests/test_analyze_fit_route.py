@@ -68,6 +68,11 @@ def test_analyze_fit_response_roundtrip():
             )
         ],
         fit_score=70,
+        matched_count=1,
+        total_requirements=2,
+        gap_count=1,
+        gap_penalty=2.5,
+        coverage_raw=72.5,
         summary="Good Python; gap on K8s.",
         recommendations=[
             AnalyzeFitRecommendationOut(
@@ -78,6 +83,19 @@ def test_analyze_fit_response_roundtrip():
         ],
     )
     d = payload.model_dump()
-    assert set(d.keys()) == {"matches", "gaps", "fit_score", "summary", "recommendations"}
+    assert set(d.keys()) == {
+        "matches",
+        "gaps",
+        "fit_score",
+        "matched_count",
+        "total_requirements",
+        "gap_count",
+        "gap_penalty",
+        "coverage_raw",
+        "summary",
+        "recommendations",
+    }
     assert d["fit_score"] == 70
+    assert d["matched_count"] == 1
+    assert d["total_requirements"] == 2
     assert len(d["recommendations"]) == 1

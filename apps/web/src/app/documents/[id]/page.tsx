@@ -716,6 +716,11 @@ function ChatTab({ documentId }: { documentId: string }) {
   const structuredAnswer = answerData
     ? parseAskStructuredAnswer(answerData.answer)
     : null;
+  const citationsByLabel = new Map(
+    (answerData?.citations ?? [])
+      .filter((c) => c.label)
+      .map((c) => [String(c.label), c])
+  );
 
   return (
     <div className="space-y-6">
@@ -757,16 +762,16 @@ function ChatTab({ documentId }: { documentId: string }) {
             <AskAnswerDisplay data={structuredAnswer} />
           ) : (
             <div className="prose prose-slate max-w-none whitespace-pre-wrap text-zenodrift-text">
-              {answerData.answer.split(/(\[\d+-c\d+\])/g).map((part, i) => {
-                const m = part.match(/^\[(\d+)-c(\d+)\]$/);
+              {answerData.answer.split(/(\[p?\d+-c\d+\])/g).map((part, i) => {
+                const m = part.match(/^\[(p?\d+-c\d+)\]$/);
                 if (m) {
-                  const idx = parseInt(m[2], 10) - 1;
-                  const citation = answerData!.citations[idx];
+                  const label = m[1].startsWith("p") ? m[1] : `p${m[1]}`;
+                  const citation = citationsByLabel.get(label);
                   return (
                     <sup
                       key={i}
                       className="cursor-help font-medium text-orange-600"
-                      title={citation?.snippet}
+                      title={citation ? `Page ${citation.page_number}: ${citation.snippet}` : undefined}
                     >
                       {part}
                     </sup>
@@ -784,11 +789,11 @@ function ChatTab({ documentId }: { documentId: string }) {
               <ul className="space-y-2">
                 {answerData.citations.map((c) => (
                   <li
-                    key={c.chunk_id}
+                    key={c.label ?? c.chunk_id}
                     className="rounded-lg bg-slate-50/80 px-3 py-2 text-sm text-zenodrift-text"
                   >
                     <span className="font-mono text-xs text-orange-600">
-                      [{c.chunk_id}]
+                      [{c.label ?? c.chunk_id}]
                     </span>{" "}
                     Page {c.page_number}: {c.snippet}
                   </li>

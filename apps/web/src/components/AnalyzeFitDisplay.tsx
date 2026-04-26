@@ -19,6 +19,15 @@ function importancePill(importance: string): string {
 }
 
 export function AnalyzeFitDisplay({ data }: { data: AnalyzeFitResult }) {
+  const matchedCount = data.matched_count ?? data.matches.length;
+  const gapCount = data.gap_count ?? data.gaps.length;
+  const totalRequirements =
+    data.total_requirements ?? matchedCount + gapCount;
+  const coverageRaw =
+    typeof data.coverage_raw === "number" ? Math.round(data.coverage_raw) : null;
+  const gapPenalty =
+    typeof data.gap_penalty === "number" ? data.gap_penalty : null;
+
   return (
     <div className="space-y-8 text-zenodrift-text">
       <div className="flex flex-wrap items-center gap-4">
@@ -31,6 +40,36 @@ export function AnalyzeFitDisplay({ data }: { data: AnalyzeFitResult }) {
           </p>
           <p className="text-3xl font-bold tabular-nums">{data.fit_score}</p>
           <p className="text-xs opacity-75">out of 100</p>
+        </div>
+        <div className="grid min-w-[220px] grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+          <div className="rounded-xl bg-slate-50/80 px-3 py-2 ring-1 ring-slate-200/70">
+            <p className="text-xs text-zenodrift-text-muted">Matched</p>
+            <p className="font-semibold text-zenodrift-text-strong">
+              {matchedCount}/{totalRequirements}
+            </p>
+          </div>
+          <div className="rounded-xl bg-slate-50/80 px-3 py-2 ring-1 ring-slate-200/70">
+            <p className="text-xs text-zenodrift-text-muted">Gaps</p>
+            <p className="font-semibold text-zenodrift-text-strong">
+              {gapCount}
+            </p>
+          </div>
+          {coverageRaw !== null ? (
+            <div className="rounded-xl bg-slate-50/80 px-3 py-2 ring-1 ring-slate-200/70">
+              <p className="text-xs text-zenodrift-text-muted">Coverage</p>
+              <p className="font-semibold text-zenodrift-text-strong">
+                {coverageRaw}%
+              </p>
+            </div>
+          ) : null}
+          {gapPenalty !== null ? (
+            <div className="rounded-xl bg-slate-50/80 px-3 py-2 ring-1 ring-slate-200/70">
+              <p className="text-xs text-zenodrift-text-muted">Gap penalty</p>
+              <p className="font-semibold text-zenodrift-text-strong">
+                -{gapPenalty.toFixed(1)}
+              </p>
+            </div>
+          ) : null}
         </div>
       </div>
 
