@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { GradientShell } from "@/components/GradientShell";
 import { LoadingCenter, LoadingRow } from "@/components/ui/loading";
+import { useToast } from "@/components/ui/ToastProvider";
 import { InterviewFocusMode } from "@/components/interview/InterviewFocusMode";
 import {
   ApiError,
@@ -22,6 +23,7 @@ import { queryKeys } from "@/lib/query-keys";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDocument, useDeleteDocumentMutation } from "@/hooks/use-documents";
 import { useAskQuestionMutation } from "@/hooks/use-ask-question";
+import { useDelayedBusy } from "@/hooks/use-delayed-busy";
 import { useUserResume } from "@/hooks/use-user-resume";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -63,6 +65,8 @@ function DocumentPageContent() {
   const { data: resumeStatus, isPending: resumeLoading } = useUserResume();
 
   const deleteMutation = useDeleteDocumentMutation();
+  const { showToast } = useToast();
+  const deleteBusy = useDelayedBusy(deleteMutation.isPending);
 
   const queryError =
     isError && loadError ? formatQueryError(loadError) : null;
@@ -123,13 +127,17 @@ function DocumentPageContent() {
     if (!doc || !confirm(`Delete "${doc.filename}"? This cannot be undone.`)) return;
     setActionError(null);
     deleteMutation.mutate(id, {
-      onSuccess: () => router.push("/dashboard"),
+      onSuccess: () => {
+        showToast({ tone: "success", message: `Deleted "${doc.filename}".` });
+        router.push("/dashboard");
+      },
       onError: (e) => {
-        setActionError(
+        const message =
           e instanceof ApiError
             ? String(e.detail || e.message)
-            : "Failed to delete document"
-        );
+            : "Failed to delete document";
+        setActionError(message);
+        showToast({ tone: "error", message });
       },
     });
   };
@@ -187,10 +195,10 @@ function DocumentPageContent() {
             <div className="flex items-center gap-2">
               <button
                 onClick={handleDelete}
-                disabled={deleteMutation.isPending}
+                disabled={deleteBusy}
                 className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
               >
-                {deleteMutation.isPending ? "Deleting…" : "Delete"}
+                {deleteBusy ? "Deleting…" : "Delete"}
               </button>
               <span
                 className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${
@@ -349,6 +357,8 @@ function AnalyzeFitTab({ documentId }: { documentId: string }) {
   const [focusQuestion, setFocusQuestion] = useState("");
   const [fitError, setFitError] = useState<string | null>(null);
   const fitMutation = useAnalyzeFitMutation(documentId);
+  const { showToast } = useToast();
+  const fitBusy = useDelayedBusy(fitMutation.isPending);
 
   const hasResume = Boolean(resume?.has_resume && resume.document_id);
   const resumeId = resume?.document_id ?? "";
@@ -380,19 +390,25 @@ function AnalyzeFitTab({ documentId }: { documentId: string }) {
               cache_hit_default_question: !focusQuestion.trim(),
             }
           );
+          showToast({
+            tone: "success",
+            message: displayAnalysis ? "Fit analysis refreshed." : "Fit analysis generated.",
+          });
         },
         onError: (err) => {
           if (err instanceof Error && err.message === "RESUME_REQUIRED") {
-            setFitError(
-              "Add your resume on the dashboard first. We need it to compare you to this job."
-            );
+            const message =
+              "Add your resume on the dashboard first. We need it to compare you to this job.";
+            setFitError(message);
+            showToast({ tone: "info", message });
             return;
           }
-          setFitError(
+          const message =
             err instanceof ApiError
               ? String(err.detail || err.message)
-              : "Could not analyze fit"
-          );
+              : "Could not analyze fit";
+          setFitError(message);
+          showToast({ tone: "error", message });
         },
       }
     );
@@ -470,7 +486,7 @@ function AnalyzeFitTab({ documentId }: { documentId: string }) {
               value={focusQuestion}
               onChange={(e) => setFocusQuestion(e.target.value)}
               rows={3}
-              disabled={fitMutation.isPending}
+              disabled={fitBusy}
               placeholder="e.g. Emphasize FP&A, budgeting, and executive reporting…"
               className="w-full rounded-xl border border-slate-200 bg-white/80 px-4 py-3 text-sm text-zenodrift-text shadow-sm ring-1 ring-slate-200/60 placeholder-zenodrift-text-muted focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400/20 disabled:opacity-70"
             />
@@ -478,10 +494,10 @@ function AnalyzeFitTab({ documentId }: { documentId: string }) {
           <button
             type="button"
             onClick={handleAnalyze}
-            disabled={fitMutation.isPending}
+            disabled={fitBusy}
             className="rounded-xl bg-slate-900 px-6 py-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 disabled:opacity-50"
           >
-            {fitMutation.isPending
+            {fitBusy
               ? "Working…"
               : displayAnalysis
                 ? "Refresh analysis"

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { motion, useReducedMotion } from "framer-motion";
 import { useLibrary } from "@/contexts/LibraryContext";
 import { GradientShell } from "@/components/GradientShell";
+import { useToast } from "@/components/ui/ToastProvider";
 import { ApiError, type DocumentSummary } from "@/lib/api";
 import { formatDocumentsListError } from "@/lib/query-error";
 import {
@@ -20,6 +21,7 @@ import {
   DocumentListSkeleton,
   LoadingSpinner,
 } from "@/components/ui/loading";
+import { useDelayedBusy } from "@/hooks/use-delayed-busy";
 import { useUserResume } from "@/hooks/use-user-resume";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -75,6 +77,7 @@ function formatUploadedAt(createdAt: string | undefined): string {
 export default function DashboardPage() {
   const reduceMotion = useReducedMotion();
   const router = useRouter();
+  const { showToast } = useToast();
   const {
     data: docs = [],
     isPending: documentsLoading,
@@ -104,6 +107,8 @@ export default function DashboardPage() {
   const ingestMutation = useIngestDocumentMutation();
   const deleteMutation = useDeleteDocumentMutation();
   const deleteAllMutation = useDeleteAllDocumentsMutation();
+  const uploadBusy = useDelayedBusy(uploadMutation.isPending);
+  const clearAllBusy = useDelayedBusy(deleteAllMutation.isPending);
 
   const listError =
     documentsQueryError && documentsError
@@ -125,19 +130,28 @@ export default function DashboardPage() {
     const file = e.target.files?.[0];
     if (!file || file.type !== "application/pdf") {
       setError("Please select a PDF file.");
+      showToast({
+        tone: "info",
+        message: "Please select a PDF before uploading.",
+      });
       return;
     }
     setError(null);
     uploadMutation.mutate(file, {
       onSuccess: (documentId) => {
         setProcessingId(documentId);
+        showToast({
+          tone: "success",
+          message: "Upload complete. Starting document processing.",
+        });
       },
       onError: (err) => {
-        setError(
+        const message =
           err instanceof ApiError
             ? String(err.detail || err.message)
-            : "Upload failed"
-        );
+            : "Upload failed";
+        setError(message);
+        showToast({ tone: "error", message });
       },
     });
     e.target.value = "";
@@ -150,12 +164,19 @@ export default function DashboardPage() {
     setProcessingId(doc.id);
     setError(null);
     ingestMutation.mutate(doc.id, {
+      onSuccess: () => {
+        showToast({
+          tone: "success",
+          message: "Processing started. We will take you to setup when ready.",
+        });
+      },
       onError: (e) => {
-        setError(
+        const message =
           e instanceof ApiError
             ? String(e.detail || e.message)
-            : "Failed to start processing"
-        );
+            : "Failed to start processing";
+        setError(message);
+        showToast({ tone: "error", message });
         setProcessingId(null);
       },
     });
@@ -166,13 +187,20 @@ export default function DashboardPage() {
     setDeletingId(doc.id);
     setError(null);
     deleteMutation.mutate(doc.id, {
+      onSuccess: () => {
+        showToast({
+          tone: "success",
+          message: `Deleted "${doc.filename}".`,
+        });
+      },
       onSettled: () => setDeletingId(null),
       onError: (e) => {
-        setError(
+        const message =
           e instanceof ApiError
             ? String(e.detail || e.message)
-            : "Failed to delete document"
-        );
+            : "Failed to delete document";
+        setError(message);
+        showToast({ tone: "error", message });
       },
     });
   };
@@ -186,12 +214,19 @@ export default function DashboardPage() {
       return;
     setError(null);
     deleteAllMutation.mutate(undefined, {
+      onSuccess: (result) => {
+        showToast({
+          tone: "success",
+          message: `Removed ${result.count} job description${result.count === 1 ? "" : "s"}.`,
+        });
+      },
       onError: (e) => {
-        setError(
+        const message =
           e instanceof ApiError
             ? String(e.detail || e.message)
-            : "Failed to clear documents"
-        );
+            : "Failed to clear documents";
+        setError(message);
+        showToast({ tone: "error", message });
       },
     });
   };
@@ -248,7 +283,7 @@ export default function DashboardPage() {
                   className="sr-only"
                   aria-label="Upload PDF file"
                 />
-                {uploadMutation.isPending ? (
+                {uploadBusy ? (
                   <div className="flex flex-col items-center gap-4">
                     <LoadingSpinner size="lg" variant="light" label="Uploading" />
                     <span className="text-sm font-medium text-zenodrift-text-muted">
@@ -318,10 +353,10 @@ export default function DashboardPage() {
           {jobDescriptionDocs.length > 0 && (
             <button
               onClick={handleClearAll}
-              disabled={deleteAllMutation.isPending}
+              disabled={clearAllBusy}
               className="shrink-0 text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
             >
-              {deleteAllMutation.isPending ? "Clearing…" : "Clear all JDs"}
+              {clearAllBusy ? "Clearing…" : "Clear all JDs"}
             </button>
           )}
         </div>

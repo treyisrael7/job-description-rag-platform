@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { useToast } from "@/components/ui/ToastProvider";
 import { ApiError } from "@/lib/api";
 import { formatQueryError } from "@/lib/query-error";
 import { LoadingRow } from "@/components/ui/loading";
+import { useDelayedBusy } from "@/hooks/use-delayed-busy";
 import {
   useUserResume,
   useUploadUserResumeMutation,
@@ -21,6 +23,9 @@ export function AccountResumeSection() {
 
   const uploadMutation = useUploadUserResumeMutation();
   const deleteMutation = useDeleteUserResumeMutation();
+  const { showToast } = useToast();
+  const uploadBusy = useDelayedBusy(uploadMutation.isPending);
+  const deleteBusy = useDelayedBusy(deleteMutation.isPending);
 
   const displayError =
     error ?? (isError && queryError ? formatQueryError(queryError) : null);
@@ -32,13 +37,18 @@ export function AccountResumeSection() {
     uploadMutation.mutate(file, {
       onSuccess: () => {
         setResumeFile(null);
+        showToast({
+          tone: "success",
+          message: "Profile resume updated.",
+        });
       },
       onError: (e) => {
-        setError(
+        const message =
           e instanceof ApiError
             ? String(e.detail || e.message)
-            : "Failed to upload resume"
-        );
+            : "Failed to upload resume";
+        setError(message);
+        showToast({ tone: "error", message });
       },
     });
   };
@@ -52,12 +62,19 @@ export function AccountResumeSection() {
       return;
     setError(null);
     deleteMutation.mutate(undefined, {
+      onSuccess: () => {
+        showToast({
+          tone: "success",
+          message: "Profile resume removed.",
+        });
+      },
       onError: (e) => {
-        setError(
+        const message =
           e instanceof ApiError
             ? String(e.detail || e.message)
-            : "Failed to delete resume"
-        );
+            : "Failed to delete resume";
+        setError(message);
+        showToast({ tone: "error", message });
       },
     });
   };
@@ -169,10 +186,10 @@ export function AccountResumeSection() {
                 <button
                   type="button"
                   onClick={handleAddResumeFile}
-                  disabled={uploadMutation.isPending}
+                  disabled={uploadBusy}
                   className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-600 disabled:opacity-50"
                 >
-                  {uploadMutation.isPending ? "Saving…" : "Save"}
+                  {uploadBusy ? "Saving…" : "Save"}
                 </button>
               )}
               {resumeFile && (
@@ -185,10 +202,10 @@ export function AccountResumeSection() {
               <button
                 type="button"
                 onClick={handleDelete}
-                disabled={deleteMutation.isPending}
+                disabled={deleteBusy}
                 className="text-sm font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
               >
-                {deleteMutation.isPending ? "Removing…" : "Remove profile resume"}
+                {deleteBusy ? "Removing…" : "Remove profile resume"}
               </button>
             )}
           </>
