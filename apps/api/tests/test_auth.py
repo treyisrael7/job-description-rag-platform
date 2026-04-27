@@ -57,7 +57,7 @@ def test_verify_clerk_token_returns_sub_for_valid_token(monkeypatch):
 async def test_get_or_create_user_returns_existing(monkeypatch):
     """get_or_create_user_by_clerk_id returns existing user when clerk_id matches."""
     user_id = uuid.uuid4()
-    clerk_id = "user_existing123"
+    clerk_id = f"user_existing_{uuid.uuid4().hex}"
     async with async_session_maker() as db:
         user = User(id=user_id, clerk_id=clerk_id, email="existing@test.local")
         db.add(user)
@@ -135,7 +135,7 @@ async def test_get_current_user_requires_bearer_token(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_current_user_rejects_bearer_plus_demo_key(monkeypatch):
-    """get_current_user returns 400 when Bearer and x-demo-key are both sent."""
+    """get_current_user preserves the legacy Bearer + x-demo-key conflict."""
     from fastapi import FastAPI, Depends
     from httpx import ASGITransport, AsyncClient
 

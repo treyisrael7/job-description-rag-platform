@@ -1,11 +1,30 @@
 /**
  * API client for InterviewOS backend.
- * Identity comes only from the Clerk session (Bearer token); never from client-supplied user ids.
+ * Identity comes from an anonymous demo session by default, or Clerk when enabled.
  */
 
 import { getAuthToken, hasAuthTokenProvider } from "./auth";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const AUTH_MODE = process.env.NEXT_PUBLIC_AUTH_MODE?.trim().toLowerCase();
+const USE_DEMO_AUTH = AUTH_MODE !== "clerk";
+const DEMO_SESSION_STORAGE_KEY = "interviewos.demoSessionId";
+
+function createDemoSessionId(): string {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `demo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function getDemoSessionId(): string {
+  if (typeof window === "undefined") return "server-demo-session";
+  const existing = window.localStorage.getItem(DEMO_SESSION_STORAGE_KEY)?.trim();
+  if (existing) return existing;
+  const sessionId = createDemoSessionId();
+  window.localStorage.setItem(DEMO_SESSION_STORAGE_KEY, sessionId);
+  return sessionId;
+}
 
 /** Thrown when a request needs a signed-in user but no Clerk token is available. */
 export class AuthRequiredError extends Error {
@@ -20,6 +39,13 @@ export class AuthRequiredError extends Error {
  * @throws AuthRequiredError if Clerk is not wired or the user has no session token.
  */
 export async function getAuthHeaders(): Promise<HeadersInit> {
+  if (USE_DEMO_AUTH) {
+    return {
+      "Content-Type": "application/json",
+      "x-demo-session-id": getDemoSessionId(),
+    };
+  }
+
   if (!hasAuthTokenProvider()) {
     throw new AuthRequiredError(
       "API authentication is not initialized. Ensure the app is wrapped with ClerkAuthProvider."

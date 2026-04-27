@@ -6,7 +6,7 @@ Built with Next.js, FastAPI, PostgreSQL + pgvector, and OpenAI. Local dev uses a
 
 ## Getting started
 
-Copy `.env.example` to `.env`, then add your `OPENAI_API_KEY` (you’ll need it for ingestion and Q&A). The web app signs in with **Clerk** — create an app at [clerk.com](https://clerk.com), then add `CLERK_JWKS_URL` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` to `.env`. The API can also run a separate **demo sandbox** (`DEMO_MODE_ENABLED` + `DEMO_KEY`) for tools like `curl`; the Next.js client always uses Clerk Bearer tokens only.
+Copy `.env.example` to `.env`, then add your `OPENAI_API_KEY` (you’ll need it for ingestion and Q&A). The default auth path is a frictionless portfolio demo: `DEMO_MODE_ENABLED=true` and `NEXT_PUBLIC_AUTH_MODE=demo`, which creates an anonymous browser session without login. Clerk is optional; set `NEXT_PUBLIC_AUTH_MODE=clerk`, then add `CLERK_JWKS_URL` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` only if you want real sign-in.
 
 Then:
 
@@ -32,13 +32,12 @@ There are PowerShell scripts in `scripts/` for upload, retrieval, reingest, chun
 
 ## API access
 
-`/health` is public. Everything else needs auth: either a Clerk Bearer token, or (in demo mode) an `x-demo-key` header. Example:
+`/health` is public. In default demo mode, protected routes use an anonymous sandbox session automatically. If you opt into Clerk with `NEXT_PUBLIC_AUTH_MODE=clerk`, protected routes use a Clerk Bearer token instead. Example:
 
 ```bash
 curl -X POST http://localhost:8000/ask \
-  -H "x-demo-key: your-secret-key" \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"uuid","document_id":"uuid","question":"What is the salary range?"}'
+  -d '{"document_id":"uuid","question":"What is the salary range?"}'
 ```
 
 Document flow: `POST /documents/presign` → PUT to the URL → `POST /documents/confirm` → `POST /documents/{id}/ingest`.
@@ -51,6 +50,10 @@ Document flow: `POST /documents/presign` → PUT to the URL → `POST /documents
 | POST /documents/ingest | 3/day |
 | POST /documents/presign | 10/day |
 | POST /documents/confirm | 20/day |
+
+Demo guardrails also cap user text before any LLM call: `MAX_ASK_QUESTION_CHARS`, `MAX_RESUME_QUESTION_CHARS`, and `MAX_INTERVIEW_ANSWER_CHARS`.
+
+Anonymous demo sessions are stored in browser local storage and map to separate sandbox users. Clearing browser storage starts a fresh demo workspace.
 
 ## Tests
 

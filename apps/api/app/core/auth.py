@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 _jwks_client: PyJWKClient | None = None
 
 _DEMO_USER_EMAIL = "demo@sandbox.local"
+_DEMO_SESSION_NAMESPACE = uuid.UUID("7a6eb1d9-43af-4972-b843-4c33ccf61e82")
 
 
 def extract_bearer_token(request: Request) -> str | None:
@@ -35,7 +36,20 @@ def extract_bearer_token(request: Request) -> str | None:
 
 
 def _demo_and_bearer_conflict(request: Request) -> bool:
-    return bool(extract_bearer_token(request) and request.headers.get("x-demo-key") is not None)
+    return bool(
+        settings.demo_key
+        and extract_bearer_token(request)
+        and request.headers.get("x-demo-key") is not None
+    )
+
+
+def _demo_session_id_from_request(request: Request) -> str | None:
+    """Return a bounded, non-secret browser demo session id."""
+    raw = (request.headers.get("x-demo-session-id") or "").strip()
+    if not raw:
+        return None
+    safe = "".join(ch for ch in raw if ch.isalnum() or ch in ("-", "_"))
+    return safe[:128] or None
 
 
 def _issuer_from_jwks_url(url: str) -> str:
@@ -107,14 +121,19 @@ async def get_or_create_user_by_clerk_id(db: AsyncSession, clerk_id: str) -> Use
     return user
 
 
-async def get_or_create_demo_user(db: AsyncSession) -> User:
-    """Sandbox user for demo mode only; isolated by fixed user id (no Clerk)."""
-    uid = settings.demo_user_id
+async def get_or_create_demo_user(db: AsyncSession, session_id: str | None = None) -> User:
+    """Sandbox user for demo mode only; isolated by anonymous browser session."""
+    if session_id:
+        uid = uuid.uuid5(_DEMO_SESSION_NAMESPACE, session_id)
+        email = f"demo+{uid.hex[:12]}@sandbox.local"
+    else:
+        uid = settings.demo_user_id
+        email = _DEMO_USER_EMAIL
     result = await db.execute(select(User).where(User.id == uid))
     user = result.scalar_one_or_none()
     if user:
         return user
-    user = User(id=uid, clerk_id=None, email=_DEMO_USER_EMAIL)
+    user = User(id=uid, clerk_id=None, email=email)
     db.add(user)
     await db.flush()
     return user
@@ -125,9 +144,8 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """
-    Bearer (non-empty) → verify Clerk JWT and resolve the real user.
-    Otherwise → demo sandbox user only if demo mode is enabled and x-demo-key is valid.
-    Demo cannot override or mix with Bearer authentication.
+    Bearer (non-empty) → verify Clerk JWT and resolve the real user when Clerk is configured.
+    Otherwise, when demo mode is enabled, resolve the fixed sandbox user.
     """
     if _demo_and_bearer_conflict(request):
         raise HTTPException(
@@ -136,30 +154,27 @@ async def get_current_user(
         )
 
     bearer = extract_bearer_token(request)
-    if bearer:
-        if not settings.clerk_jwks_url:
-            raise HTTPException(
-                status_code=401,
-                detail="Clerk is not configured. Add CLERK_JWKS_URL to your API environment.",
-            )
+    if bearer and settings.clerk_jwks_url:
         clerk_id = verify_clerk_token(bearer)
-        if not clerk_id:
+        if clerk_id:
+            user = await get_or_create_user_by_clerk_id(db, clerk_id)
+            await db.commit()
+            await db.refresh(user)
+            return user
+        if not settings.demo_auth_active:
             raise HTTPException(
                 status_code=401,
                 detail="Invalid or expired session. Please sign in again.",
             )
-        user = await get_or_create_user_by_clerk_id(db, clerk_id)
+
+    if settings.demo_auth_active:
+        user = await get_or_create_demo_user(
+            db,
+            session_id=_demo_session_id_from_request(request),
+        )
         await db.commit()
         await db.refresh(user)
         return user
-
-    if settings.demo_auth_active:
-        key = request.headers.get("x-demo-key")
-        if key == settings.demo_key:
-            user = await get_or_create_demo_user(db)
-            await db.commit()
-            await db.refresh(user)
-            return user
 
     raise HTTPException(status_code=401, detail="Authentication required")
 

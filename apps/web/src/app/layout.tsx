@@ -12,11 +12,31 @@ export const metadata: Metadata = {
   description: "Job description–grounded interview practice with evidence-cited feedback",
 };
 
+const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+const authMode = process.env.NEXT_PUBLIC_AUTH_MODE?.trim().toLowerCase();
+const useClerk = Boolean(clerkPublishableKey && authMode === "clerk");
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const app = (
+    <html lang="en">
+      <body>
+        <QueryProvider>
+          <ToastProvider>
+            <LibraryProvider>{children}</LibraryProvider>
+          </ToastProvider>
+        </QueryProvider>
+      </body>
+    </html>
+  );
+
+  if (!useClerk) {
+    return app;
+  }
+
   return (
     <ClerkProvider>
       <html lang="en">

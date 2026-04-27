@@ -9,6 +9,12 @@ import {
 
 type Difficulty = "junior" | "mid" | "senior";
 
+function normalizeQuestionCount(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(10, Math.max(1, Math.round(parsed)));
+}
+
 const DOMAIN_LABELS: Record<string, string> = {
   technical: "Technical",
   finance: "Finance",
@@ -68,7 +74,7 @@ export function InterviewSetupPanel({
 }: InterviewSetupPanelProps) {
   const router = useRouter();
   const [difficulty, setDifficulty] = useState<Difficulty>("junior");
-  const [numQuestions, setNumQuestions] = useState(6);
+  const [numQuestionsInput, setNumQuestionsInput] = useState("6");
   const [genError, setGenError] = useState<string | null>(null);
   const generateMutation = useGenerateInterviewMutation(documentId);
 
@@ -82,6 +88,8 @@ export function InterviewSetupPanel({
 
   const handleStartInterview = async () => {
     setGenError(null);
+    const numQuestions = normalizeQuestionCount(numQuestionsInput);
+    setNumQuestionsInput(String(numQuestions));
     try {
       const res = await generateMutation.mutateAsync({
         difficulty,
@@ -147,8 +155,11 @@ export function InterviewSetupPanel({
           type="number"
           min={1}
           max={10}
-          value={numQuestions}
-          onChange={(e) => setNumQuestions(Math.min(10, Math.max(1, Number(e.target.value) || 1)))}
+          value={numQuestionsInput}
+          onChange={(e) => setNumQuestionsInput(e.target.value)}
+          onBlur={() =>
+            setNumQuestionsInput(String(normalizeQuestionCount(numQuestionsInput)))
+          }
           className="w-full rounded-xl border border-white/60 bg-white/90 px-4 py-3 text-zenodrift-text shadow-md transition-colors focus:border-zenodrift-accent focus:outline-none focus:ring-2 focus:ring-zenodrift-accent/35 focus:ring-offset-2"
         />
       </div>

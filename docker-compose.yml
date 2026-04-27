@@ -26,8 +26,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/interview_os
       DATABASE_URL_SYNC: postgresql://postgres:postgres@postgres:5432/interview_os
-      DEMO_MODE_ENABLED: ${DEMO_MODE_ENABLED:-false}
-      DEMO_KEY: ${DEMO_KEY:-}
+      DEMO_MODE_ENABLED: ${DEMO_MODE_ENABLED:-true}
       CLERK_JWKS_URL: ${CLERK_JWKS_URL:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       AWS_REGION: ${AWS_REGION:-us-east-1}
@@ -40,6 +39,9 @@ services:
       MAX_CHUNKS_PER_DOC: ${MAX_CHUNKS_PER_DOC:-300}
       TOP_K_MAX: ${TOP_K_MAX:-8}
       MAX_COMPLETION_TOKENS: ${MAX_COMPLETION_TOKENS:-500}
+      MAX_ASK_QUESTION_CHARS: ${MAX_ASK_QUESTION_CHARS:-1000}
+      MAX_RESUME_QUESTION_CHARS: ${MAX_RESUME_QUESTION_CHARS:-1000}
+      MAX_INTERVIEW_ANSWER_CHARS: ${MAX_INTERVIEW_ANSWER_CHARS:-6000}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       OPENAI_EMBEDDING_DIM: ${OPENAI_EMBEDDING_DIM:-1536}
@@ -54,11 +56,17 @@ services:
     build:
       context: ./apps/web
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+        NEXT_PUBLIC_AUTH_MODE: ${NEXT_PUBLIC_AUTH_MODE:-demo}
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
     container_name: rag-web
     ports:
       - "3001:3000"  # use 3001 if 3000 is taken by local dev
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_AUTH_MODE: ${NEXT_PUBLIC_AUTH_MODE:-demo}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
       BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
       BASIC_AUTH_PASSWORD: ${BASIC_AUTH_PASSWORD:-}
     depends_on:

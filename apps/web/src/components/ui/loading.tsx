@@ -29,9 +29,6 @@ type LoadingSpinnerProps = {
   decorative?: boolean;
 };
 
-/**
- * Smooth continuous rotation (linear). Respects prefers-reduced-motion with a soft pulse instead.
- */
 export function LoadingSpinner({
   size = "md",
   variant = "default",
@@ -39,28 +36,16 @@ export function LoadingSpinner({
   label = "Loading",
   decorative = false,
 }: LoadingSpinnerProps) {
-  const reduceMotion = useReducedMotion();
   const dim = SPINNER_SIZE[size];
   const colors = SPINNER_VARIANT[variant];
   const a11y = decorative
     ? ({ "aria-hidden": true } as const)
     : ({ role: "status" as const, "aria-label": label });
 
-  if (reduceMotion) {
-    return (
-      <div
-        {...a11y}
-        className={`rounded-full border-2 border-dashed opacity-70 ${dim} ${colors} ${className}`}
-      />
-    );
-  }
-
   return (
-    <motion.div
+    <div
       {...a11y}
-      className={`rounded-full border-2 ${dim} ${colors} ${className}`}
-      animate={{ rotate: 360 }}
-      transition={{ duration: 0.78, repeat: Infinity, ease: "linear" }}
+      className={`animate-spin rounded-full border-2 motion-reduce:animate-pulse ${dim} ${colors} ${className}`}
     />
   );
 }
@@ -68,29 +53,11 @@ export function LoadingSpinner({
 type FadeInProps = {
   children: ReactNode;
   className?: string;
-  delay?: number;
 };
 
 /** Gentle entrance for loading shells and content blocks. */
-export function FadeIn({ children, className = "", delay = 0 }: FadeInProps) {
-  const reduceMotion = useReducedMotion();
-  if (reduceMotion) {
-    return <div className={className}>{children}</div>;
-  }
-  return (
-    <motion.div
-      className={className}
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{
-        duration: 0.38,
-        delay,
-        ease: [0.22, 1, 0.36, 1],
-      }}
-    >
-      {children}
-    </motion.div>
-  );
+export function FadeIn({ children, className = "" }: FadeInProps) {
+  return <div className={className}>{children}</div>;
 }
 
 type LoadingCenterProps = {
@@ -219,7 +186,7 @@ export function DocumentListSkeleton({ className = "" }: { className?: string })
 /** Placeholder layout for analytics while the overview query resolves. */
 export function AnalyticsOverviewSkeleton({ className = "" }: { className?: string }) {
   const reduceMotion = useReducedMotion();
-  const pulse = (delay: number) =>
+  const pulse = () =>
     reduceMotion
       ? { opacity: 0.65 }
       : { opacity: [0.45, 0.82, 0.45] };
@@ -233,7 +200,7 @@ export function AnalyticsOverviewSkeleton({ className = "" }: { className?: stri
       <div className="grid gap-4 sm:grid-cols-2">
         <motion.div
           className="dashboard-card h-[220px] rounded-zenodrift-panel bg-white/50 p-4"
-          animate={pulse(0)}
+          animate={pulse()}
           transition={pulseTransition(0)}
         >
           <div className="mb-4 h-3 w-24 rounded bg-neutral-200/70" />
@@ -241,7 +208,7 @@ export function AnalyticsOverviewSkeleton({ className = "" }: { className?: stri
         </motion.div>
         <motion.div
           className="dashboard-card h-[220px] rounded-zenodrift-panel bg-white/50 p-4"
-          animate={pulse(0.1)}
+          animate={pulse()}
           transition={pulseTransition(0.1)}
         >
           <div className="mb-4 h-3 w-28 rounded bg-neutral-200/70" />
@@ -250,7 +217,7 @@ export function AnalyticsOverviewSkeleton({ className = "" }: { className?: stri
       </div>
       <motion.div
         className="dashboard-card h-32 rounded-zenodrift-panel bg-white/50 px-5 py-4"
-        animate={pulse(0.15)}
+        animate={pulse()}
         transition={pulseTransition(0.15)}
       >
         <div className="h-3 w-36 rounded bg-neutral-200/70" />

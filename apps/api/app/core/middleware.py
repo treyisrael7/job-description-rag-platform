@@ -23,9 +23,9 @@ def _path_matches_route(path: str) -> str | None:
 
 class DemoGateMiddleware(BaseHTTPMiddleware):
     """
-    When demo mode is enabled: require x-demo-key on non-public routes unless the client
-    uses a non-empty Bearer token (real auth). Never supplies user identity.
-    When demo mode is off: demo headers are ignored; no demo gate.
+    Demo mode no longer gates requests with a shared browser key. Authentication
+    dependencies resolve unauthenticated requests to the fixed sandbox user.
+    This middleware only preserves the legacy Bearer + x-demo-key conflict check.
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
@@ -54,13 +54,6 @@ class DemoGateMiddleware(BaseHTTPMiddleware):
         if bearer:
             return await call_next(request)
 
-        key = request.headers.get("x-demo-key")
-        if key != settings.demo_key:
-            return Response(
-                content='{"detail":"Missing or invalid x-demo-key header"}',
-                status_code=401,
-                media_type="application/json",
-            )
         return await call_next(request)
 
 

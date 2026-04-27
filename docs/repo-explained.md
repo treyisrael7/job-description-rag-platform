@@ -87,14 +87,14 @@ Backend settings live in `apps/api/app/core/config.py`. The API loads environmen
 Key config areas:
 
 - **Database**: `DATABASE_URL`, `DATABASE_URL_SYNC`.
-- **Auth**: `CLERK_JWKS_URL`, optional `CLERK_ISSUER`, `DEMO_MODE_ENABLED`, `DEMO_KEY`, optional `DEMO_USER_ID`.
+- **Auth**: `DEMO_MODE_ENABLED`, optional `DEMO_USER_ID`, optional Clerk settings (`CLERK_JWKS_URL`, `CLERK_ISSUER`) when real sign-in is enabled.
 - **Storage**: `AWS_REGION`, `S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`.
 - **PDF limits**: `MAX_PDF_MB`, `MAX_PDF_PAGES`, `MAX_RESUME_PDF_PAGES`.
 - **Chunk/retrieval limits**: `MAX_CHUNKS_PER_DOC`, `TOP_K_MAX`, `TOP_N_CANDIDATES`, `MMR_LAMBDA`, `HYBRID_RETRIEVAL_ENABLED`.
 - **OpenAI**: `OPENAI_API_KEY`, `OPENAI_EMBEDDING_MODEL`, `OPENAI_EMBEDDING_DIM`, `MODEL_FAST`, `MODEL_HIGH_QUALITY`.
 - **LLM budget/caching**: `MAX_LLM_BUDGET_TOKENS`, `REDIS_URL`, `CACHE_TTL_RETRIEVAL_SECONDS`, `CACHE_TTL_EVALUATION_SECONDS`.
 - **Plan quotas**: `PLAN_LIMIT_FREE`, `PLAN_LIMIT_PRO`, `PLAN_LIMIT_ENTERPRISE`, `DEMO_MONTHLY_EVALUATION_LIMIT`.
-- **Web**: `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, optional `BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD`.
+- **Web**: `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_AUTH_MODE`, optional `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, optional `BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD`.
 
 ## 6. Backend Application Shell
 
@@ -114,7 +114,7 @@ Middleware order matters:
 
 - `CORSMiddleware` allows localhost web origins plus `CORS_ORIGINS`.
 - `RateLimitMiddleware` applies in-memory rate limits to expensive routes.
-- `DemoGateMiddleware` enforces `x-demo-key` when demo mode is enabled, while still allowing Clerk Bearer auth.
+- `DemoGateMiddleware` only preserves a legacy Bearer plus `x-demo-key` conflict check; demo identity is resolved in auth dependencies.
 
 The `/health` endpoint checks DB connectivity with `SELECT 1` and reports whether Clerk is configured.
 
@@ -125,13 +125,13 @@ Authentication is implemented in `apps/api/app/core/auth.py`.
 The API supports two auth modes:
 
 - **Clerk Bearer token**: The frontend obtains a Clerk JWT and sends `Authorization: Bearer <token>`. The API verifies it through Clerk JWKS and creates or loads a `users` row keyed by Clerk user id.
-- **Demo mode**: If `DEMO_MODE_ENABLED=true` and `DEMO_KEY` is set, tools such as curl can send `x-demo-key`. This maps to a fixed sandbox user id.
+- **Demo mode**: If `DEMO_MODE_ENABLED=true`, unauthenticated requests map to a sandbox user derived from the browser's anonymous demo session id.
 
-The API rejects requests that mix Bearer auth and `x-demo-key`.
+Legacy clients that mix Bearer auth and `x-demo-key` are rejected.
 
 Authorization is mostly ownership-based. `assert_resource_ownership` checks that a loaded resource has `user_id == current_user.id`, returning `403` when a user tries to access another user's resource.
 
-On the frontend, `apps/web/src/lib/api.ts` intentionally does not send client-supplied user ids for identity. It gets auth headers from `apps/web/src/lib/auth.ts`, which is populated by `ClerkAuthProvider`.
+On the frontend, `apps/web/src/lib/api.ts` intentionally does not send client-supplied user ids for identity. In demo mode it sends an anonymous `x-demo-session-id` header from browser local storage so visitors get isolated sandbox workspaces; in Clerk mode it gets auth headers from `apps/web/src/lib/auth.ts`, which is populated by `ClerkAuthProvider`.
 
 ## 8. Database Model Overview
 

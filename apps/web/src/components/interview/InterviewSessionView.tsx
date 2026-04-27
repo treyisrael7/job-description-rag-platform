@@ -7,6 +7,8 @@ import { useEvaluateAnswerMutation } from "@/hooks/use-interview-evaluate";
 import { EvaluationDrawer } from "./EvaluationDrawer";
 import { ReferenceDrawer } from "./ReferenceDrawer";
 
+const MAX_INTERVIEW_ANSWER_CHARS = 6000;
+
 function formatQuestionChip(
   type: string | undefined,
   focusArea: string | undefined,
@@ -194,18 +196,24 @@ export function InterviewSessionView({
               <textarea
                 value={answerText}
                 onChange={(e) => setAnswerText(e.target.value)}
+                maxLength={MAX_INTERVIEW_ANSWER_CHARS}
                 placeholder="Type your answer here…"
                 rows={3}
                 disabled={evaluateMutation.isPending}
                 className="w-full resize-none rounded-xl border-0 bg-white/60 px-3 py-2.5 text-sm text-zenodrift-text shadow-inner placeholder-neutral-400 backdrop-blur-sm focus:bg-white/80 focus:ring-2 focus:ring-zenodrift-accent/25 focus:outline-none disabled:opacity-70"
               />
               <div className="flex items-center justify-between gap-2">
-                <button
-                  onClick={() => setReferenceDrawerOpen(true)}
-                  className="text-sm text-zenodrift-text-muted hover:text-zenodrift-text"
-                >
-                  Reference
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setReferenceDrawerOpen(true)}
+                    className="text-sm text-zenodrift-text-muted hover:text-zenodrift-text"
+                  >
+                    Reference
+                  </button>
+                  <span className="text-xs text-zenodrift-text-muted">
+                    {answerText.length}/{MAX_INTERVIEW_ANSWER_CHARS}
+                  </span>
+                </div>
                 <button
                   onClick={handleSubmit}
                   disabled={evaluateMutation.isPending || !answerText.trim()}

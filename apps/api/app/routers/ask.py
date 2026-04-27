@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import assert_resource_ownership, get_current_user
 from app.core.config import settings
+from app.core.input_limits import enforce_text_limit
 from app.db.session import get_db
 from app.models import Document, User
 from app.services.qa import generate_grounded_answer
@@ -63,6 +64,11 @@ async def ask(
     Fit-oriented Q&A over retrieved chunks (JD vs resume when ``source_type`` is set).
     Returns ``answer`` as strict JSON text and parallel chunk citations for grounding.
     """
+    question_text = enforce_text_limit(
+        body.question,
+        field_name="question",
+        max_chars=settings.max_ask_question_chars,
+    )
     result = await db.execute(select(Document).where(Document.id == body.document_id))
     doc = result.scalar_one_or_none()
     if not doc:
@@ -124,7 +130,7 @@ async def ask(
 
     # Retrieve relevant chunks
     try:
-        query_embedding = embed_query(body.question)
+        query_embedding = embed_query(question_text)
     except Exception as e:
         logger.exception("embed_query failed")
         raise HTTPException(status_code=503, detail=f"Embedding failed: {str(e)[:200]}")
@@ -132,14 +138,14 @@ async def ask(
     section_types = None
     doc_domain = doc.doc_domain or None
     if doc.doc_domain == "job_description":
-        section_types = suggest_section_filters(body.question)
+        section_types = suggest_section_filters(question_text)
 
     try:
         chunks = await retrieve_chunks(
             db=db,
             document_id=body.document_id,
             query_embedding=query_embedding,
-            query_text=body.question,
+            query_text=question_text,
             top_k=min(ASK_TOP_K, settings.top_k_max),
             include_low_signal=False,
             section_types=section_types,
@@ -152,7 +158,7 @@ async def ask(
                 db=db,
                 document_id=body.document_id,
                 query_embedding=query_embedding,
-                query_text=body.question,
+                query_text=question_text,
                 top_k=min(ASK_TOP_K, settings.top_k_max),
                 include_low_signal=False,
                 section_types=None,
@@ -166,7 +172,7 @@ async def ask(
                 db=db,
                 document_id=body.document_id,
                 query_embedding=query_embedding,
-                query_text=body.question,
+                query_text=question_text,
                 top_k=min(ASK_TOP_K, settings.top_k_max),
                 include_low_signal=False,
                 section_types=None,
@@ -180,7 +186,7 @@ async def ask(
     # Generate grounded answer (or fallback if no chunks)
     try:
         answer, citations = generate_grounded_answer(
-            question=body.question,
+            question=question_text,
             chunks=chunks,
             max_tokens=settings.max_completion_tokens,
         )

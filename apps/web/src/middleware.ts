@@ -8,7 +8,7 @@ const isProtectedRoute = createRouteMatcher([
 ]);
 
 /**
- * When Clerk is configured (NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY), use Clerk auth.
+ * When Clerk is configured and demo mode is not configured, use Clerk auth.
  * Otherwise fall back to Basic Auth if BASIC_AUTH_USER/BASIC_AUTH_PASSWORD are set.
  */
 function basicAuthMiddleware(request: NextRequest) {
@@ -58,7 +58,13 @@ export default function middleware(
     return NextResponse.next();
   }
 
-  if (process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+  const authMode = process.env.NEXT_PUBLIC_AUTH_MODE?.trim().toLowerCase();
+  if (authMode !== "clerk") return NextResponse.next();
+
+  if (
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY &&
+    authMode === "clerk"
+  ) {
     return clerkAuthMiddleware(request, event);
   }
   return basicAuthMiddleware(request);

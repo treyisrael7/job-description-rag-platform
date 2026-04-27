@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models import InterviewQuestion, InterviewSession
+from app.models import InterviewAnswer, InterviewQuestion, InterviewSession
 from app.services.adaptive_engine import select_next_question_type
 from app.services.jd_sections import normalize_jd_text
 from app.services.interview.constants import (

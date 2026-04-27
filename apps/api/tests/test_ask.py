@@ -28,6 +28,24 @@ async def test_ask_requires_valid_input(client, demo_key_off, monkeypatch, force
 
 
 @pytest.mark.asyncio
+async def test_ask_rejects_overlong_question(client, demo_key_off, monkeypatch, force_auth):
+    """Ask rejects oversized questions before embedding or LLM calls."""
+    monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(settings, "max_ask_question_chars", 12)
+    await force_auth()
+
+    resp = await client.post(
+        "/ask",
+        json={
+            "document_id": "11111111-1111-1111-1111-111111111111",
+            "question": "x" * 13,
+        },
+    )
+    assert resp.status_code == 413
+    assert resp.json()["detail"]["field"] == "question"
+
+
+@pytest.mark.asyncio
 async def test_ask_document_not_found(client, demo_key_off, monkeypatch, force_auth):
     """Ask returns 404 for unknown document."""
     monkeypatch.setattr(settings, "openai_api_key", "sk-test")

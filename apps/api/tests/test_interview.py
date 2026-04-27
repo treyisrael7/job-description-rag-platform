@@ -319,6 +319,24 @@ async def test_interview_evaluate_requires_valid_input(client, demo_key_off, for
 
 
 @pytest.mark.asyncio
+async def test_interview_evaluate_rejects_overlong_answer(client, demo_key_off, monkeypatch, force_auth):
+    """Evaluate rejects oversized answers before consuming quota or calling the LLM."""
+    monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(settings, "max_interview_answer_chars", 20)
+    await force_auth()
+    resp = await client.post(
+        "/interview/evaluate",
+        json={
+            "document_id": "11111111-1111-1111-1111-111111111111",
+            "question_id": "11111111-1111-1111-1111-111111111111",
+            "answer_text": "x" * 21,
+        },
+    )
+    assert resp.status_code == 413
+    assert resp.json()["detail"]["field"] == "answer_text"
+
+
+@pytest.mark.asyncio
 async def test_interview_evaluate_question_not_found(client, demo_key_off, monkeypatch, force_auth):
     """Evaluate returns 404 for unknown question."""
     monkeypatch.setattr(settings, "openai_api_key", "sk-test")
@@ -621,7 +639,11 @@ async def test_interview_retrieval_feedback_success(client, demo_key_off, monkey
     assert "id" in data
 
     async with async_session_maker() as db:
-        r = await db.execute(select(InterviewRetrievalFeedback))
+        r = await db.execute(
+            select(InterviewRetrievalFeedback).where(
+                InterviewRetrievalFeedback.answer_id == uuid.UUID(answer_id)
+            )
+        )
         rows = r.scalars().all()
         assert len(rows) == 1
         row = rows[0]
@@ -638,7 +660,11 @@ async def test_interview_retrieval_feedback_success(client, demo_key_off, monkey
     assert fb2.json()["updated"] is True
 
     async with async_session_maker() as db:
-        r = await db.execute(select(InterviewRetrievalFeedback))
+        r = await db.execute(
+            select(InterviewRetrievalFeedback).where(
+                InterviewRetrievalFeedback.answer_id == uuid.UUID(answer_id)
+            )
+        )
         assert len(r.scalars().all()) == 1
 
 

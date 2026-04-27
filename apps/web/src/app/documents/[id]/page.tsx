@@ -36,6 +36,7 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 type Tab = "chat" | "interview";
+const MAX_ASK_QUESTION_CHARS = 1000;
 
 const TAB_BASE =
   "rounded-t-lg px-4 py-2.5 text-sm font-medium transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-zenodrift-accent focus-visible:ring-offset-2 focus-visible:ring-offset-white";
@@ -324,6 +325,7 @@ function ChatTab({ documentId }: { documentId: string }) {
             type="text"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
+            maxLength={MAX_ASK_QUESTION_CHARS}
             placeholder="Try: salary range, must-have skills, day-to-day work, remote policy…"
             disabled={askMutation.isPending}
             className="flex-1 rounded-xl border border-slate-200 bg-white/80 px-4 py-3 text-zenodrift-text-strong shadow-sm ring-1 ring-slate-200/60 placeholder-zenodrift-text-muted transition-colors focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400/20 disabled:opacity-70"
@@ -336,6 +338,9 @@ function ChatTab({ documentId }: { documentId: string }) {
             {askMutation.isPending ? "..." : "Ask"}
           </button>
         </div>
+        <p className="mt-1 text-right text-xs text-zenodrift-text-muted">
+          {question.length}/{MAX_ASK_QUESTION_CHARS}
+        </p>
       </form>
 
       {askError && (

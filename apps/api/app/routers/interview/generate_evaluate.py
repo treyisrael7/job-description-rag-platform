@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import assert_resource_ownership, get_current_user
 from app.core.config import settings
+from app.core.input_limits import enforce_text_limit
 from app.db.session import get_db
 from app.models import Document, InterviewAnswer, InterviewQuestion, InterviewSession, User
 from app.routers.interview.helpers import from_rubric, question_to_output, to_role_profile_out
@@ -193,6 +194,11 @@ async def evaluate(
             status_code=503,
             detail="OpenAI API not configured; set OPENAI_API_KEY",
         )
+    answer_text = enforce_text_limit(
+        body.answer_text,
+        field_name="answer_text",
+        max_chars=settings.max_interview_answer_chars,
+    )
 
     result = await db.execute(
         select(InterviewQuestion, InterviewSession)
@@ -240,7 +246,7 @@ async def evaluate(
             what_good_looks_like=bullets,
             must_mention=must_mention,
             role_profile=rp_dict,
-            user_answer=body.answer_text,
+            user_answer=answer_text,
             evidence=evidence,
             evaluation_mode=body.mode,
             session_id=session.id,
@@ -257,7 +263,7 @@ async def evaluate(
         llm_score = float(mean_0_10)
     else:
         score_breakdown = compute_score_breakdown(
-            user_answer=body.answer_text,
+            user_answer=answer_text,
             evidence=ev_for_scoring,
             what_good_looks_like=bullets,
             must_mention=must_mention,
@@ -355,7 +361,7 @@ async def evaluate(
 
     answer = InterviewAnswer(
         question_id=body.question_id,
-        answer_text=body.answer_text,
+        answer_text=answer_text,
         score=final_score,
         feedback_summary=feedback_summary,
         strengths=strengths_list,

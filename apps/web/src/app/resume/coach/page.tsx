@@ -14,6 +14,8 @@ import {
 import { LoadingRow } from "@/components/ui/loading";
 import { useUserResume } from "@/hooks/use-user-resume";
 
+const MAX_RESUME_QUESTION_CHARS = 1000;
+
 export default function ResumeCoachPage() {
   const [question, setQuestion] = useState("");
   const [answerData, setAnswerData] = useState<AskResponse | null>(null);
@@ -95,11 +97,15 @@ export default function ResumeCoachPage() {
                 id="resume-coach-q"
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
+                maxLength={MAX_RESUME_QUESTION_CHARS}
                 rows={3}
                 disabled={mutation.isPending}
                 placeholder="e.g. How can I make my impact bullets stronger? Is my education section too long?"
                 className="w-full rounded-xl border border-slate-200 bg-white/90 px-4 py-3 text-zenodrift-text-strong shadow-sm ring-1 ring-slate-200/60 placeholder-zenodrift-text-muted focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400/20 disabled:opacity-70"
               />
+              <p className="text-right text-xs text-zenodrift-text-muted">
+                {question.length}/{MAX_RESUME_QUESTION_CHARS}
+              </p>
               <button
                 type="submit"
                 disabled={mutation.isPending || !question.trim()}

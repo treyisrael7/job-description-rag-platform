@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import assert_resource_ownership, get_current_user
 from app.core.config import settings
+from app.core.input_limits import enforce_text_limit
 from app.db.session import get_db
 from app.models import Document, InterviewSource, User
 from app.routers.ask import AskOutput, Citation
@@ -201,6 +202,11 @@ async def ask_profile_resume(
     Resume improvement Q&A over the account resume. Same response envelope as POST /ask;
     ``answer`` is coaching JSON.
     """
+    question_text = enforce_text_limit(
+        body.question,
+        field_name="question",
+        max_chars=settings.max_resume_question_chars,
+    )
     result = await db.execute(
         select(Document).where(
             Document.user_id == current_user.id,
@@ -228,7 +234,7 @@ async def ask_profile_resume(
         )
 
     try:
-        query_embedding = embed_query(body.question)
+        query_embedding = embed_query(question_text)
     except Exception as e:
         logger.exception("embed_query failed (resume coach)")
         raise HTTPException(status_code=503, detail=f"Embedding failed: {str(e)[:200]}")
@@ -240,7 +246,7 @@ async def ask_profile_resume(
             db=db,
             document_id=doc.id,
             query_embedding=query_embedding,
-            query_text=body.question,
+            query_text=question_text,
             top_k=min(RESUME_COACH_TOP_K, settings.top_k_max),
             include_low_signal=False,
             section_types=None,
@@ -252,7 +258,7 @@ async def ask_profile_resume(
                 db=db,
                 document_id=doc.id,
                 query_embedding=query_embedding,
-                query_text=body.question,
+                query_text=question_text,
                 top_k=min(RESUME_COACH_TOP_K, settings.top_k_max),
                 include_low_signal=False,
                 section_types=None,
@@ -265,7 +271,7 @@ async def ask_profile_resume(
 
     try:
         answer, citations = generate_resume_improvement_answer(
-            question=body.question,
+            question=question_text,
             chunks=chunks,
             max_tokens=settings.max_completion_tokens,
         )

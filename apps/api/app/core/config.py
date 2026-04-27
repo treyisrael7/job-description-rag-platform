@@ -32,9 +32,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/interview_os"
     database_url_sync: str = "postgresql://postgres:postgres@localhost:5432/interview_os"
 
-    # Demo sandbox (OFF in production). When False, x-demo-key and demo user identity are disabled entirely.
-    demo_mode_enabled: bool = False  # DEMO_MODE_ENABLED
-    demo_key: str | None = None  # DEMO_KEY; required when demo_mode_enabled (validated below)
+    # Demo sandbox defaults on for the portfolio/local path. Disable explicitly for production.
+    demo_mode_enabled: bool = True  # DEMO_MODE_ENABLED
+    demo_key: str | None = None  # DEMO_KEY; legacy optional shared secret
     demo_user_id: uuid.UUID = _DEFAULT_DEMO_USER_ID  # DEMO_USER_ID — DB user for sandbox data only
 
     # Clerk JWT (Bearer). Real users always authenticate here; demo never overrides a valid Bearer path.
@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     max_chunks_per_doc: int = 300  # MAX_CHUNKS_PER_DOC
     top_k_max: int = 8  # TOP_K_MAX
     max_completion_tokens: int = 500  # MAX_COMPLETION_TOKENS
+    max_ask_question_chars: int = 1_000  # MAX_ASK_QUESTION_CHARS
+    max_resume_question_chars: int = 1_000  # MAX_RESUME_QUESTION_CHARS
+    max_interview_answer_chars: int = 6_000  # MAX_INTERVIEW_ANSWER_CHARS
     # Estimated-token cap for one LLM call (system + user/context + completion reserve).
     # Env aliases: MAX_LLM_BUDGET_TOKENS, MAX_TOKENS.
     max_llm_budget_tokens: int = Field(
@@ -107,13 +110,13 @@ class Settings(BaseSettings):
     plan_limit_free: int = 30  # PLAN_LIMIT_FREE
     plan_limit_pro: int = 500  # PLAN_LIMIT_PRO
     plan_limit_enterprise: int = 100_000  # PLAN_LIMIT_ENTERPRISE
-    # Demo sandbox user (x-demo-key): separate cap so local testing does not hit free tier.
+    # Demo sandbox user: separate cap so local testing does not hit free tier.
     demo_monthly_evaluation_limit: int = 5_000  # DEMO_MONTHLY_EVALUATION_LIMIT
 
     @property
     def demo_auth_active(self) -> bool:
-        """True when demo header auth is allowed (demo mode on and DEMO_KEY set)."""
-        return bool(self.demo_mode_enabled and self.demo_key)
+        """True when unauthenticated requests resolve to the fixed sandbox user."""
+        return bool(self.demo_mode_enabled)
 
     @property
     def openai_eval_chat_model(self) -> str:
@@ -130,8 +133,6 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_demo_config(self) -> Self:
-        if self.demo_mode_enabled and not (self.demo_key and str(self.demo_key).strip()):
-            raise ValueError("DEMO_MODE_ENABLED requires a non-empty DEMO_KEY")
         return self
 
 
